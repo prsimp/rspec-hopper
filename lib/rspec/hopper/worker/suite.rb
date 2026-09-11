@@ -104,15 +104,7 @@ module RSpec
         # default progress formatter when there is none.
         def apply_formatter_args(args)
           _remaining, pairs = CLI::FormatterArgs.split(Array(args).map(&:to_s))
-          entries = []
-          pairs.each do |flag, value|
-            if flag == "--format"
-              entries << [value]
-            else
-              entries << ["progress"] if entries.empty?
-              entries.last << value
-            end
-          end
+          entries = CLI::FormatterArgs.entries(pairs).map { |formatter, out| out ? [formatter, out] : [formatter] }
           entries.each { |entry| configuration.add_formatter(*entry) }
           entries
         end

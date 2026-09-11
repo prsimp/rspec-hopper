@@ -32,6 +32,7 @@ lib/rspec/hopper/report.rb                 verdict, exit code, JSON summary
 lib/rspec/hopper/ci_env.rb                 build/worker id inference from CI env vars
 lib/rspec/hopper/cli.rb                    dispatch: work | report
 lib/rspec/hopper/cli/work.rb               OptionParser -> WorkConfig; strips --format/--out for children
+lib/rspec/hopper/cli/formatter_args.rb  --format/--out splitting; per-child output files
 lib/rspec/hopper/cli/report.rb             OptionParser -> ReportConfig
 lib/rspec/hopper/supervisor.rb             --processes N, boot modes, signal forwarding, exit precedence
 exe/rspec-hopper

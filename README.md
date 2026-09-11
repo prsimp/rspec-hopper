@@ -344,9 +344,23 @@ rspec-hopper work --processes 4 --build "$B" --worker "$W" --redis "$R" \
 
 produces `tmp/junit-.xml`, `tmp/junit-2.xml`, `tmp/junit-3.xml` and
 `tmp/junit-4.xml`. Without the placeholder every child writes the same file and the
-last one wins. Console formatters such as `documentation` write to the shared standard
-output of all children and interleave unreadably above one process; prefer `progress`
-on the console and a file formatter for the results.
+last one wins.
+
+A formatter that is given no `--out` of its own gets one: children write to
+`tmp/rspec-hopper/<worker id>-<formatter>.<ext>`, and a run with no `--format` at all
+gets a `progress` formatter pointed at that directory. Above one process, therefore,
+nothing but hopper's own log lines reaches the console.
+
+That is deliberate. Each child runs only its share of the build, so a per-process RSpec
+summary describes a fragment, and a child that reserved nothing prints
+`0 examples, 0 failures` for a build that may have failed. The closing word belongs to
+`rspec-hopper report`, which is the only thing that sees every worker's results; run it
+as a final CI step, or pass `--report-on-exit` to have the parent run it and adopt its
+exit code. Console formatters such as `documentation` still interleave unreadably if
+you point several children at the console yourself.
+
+With `--processes 1` (the default) nothing is redirected: one worker owns the console
+and prints its summary as plain `rspec` would.
 
 ## Retries, reclaims and per-unit counters
 

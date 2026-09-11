@@ -147,9 +147,31 @@ RSpec.describe RSpec::Hopper::Supervisor do
       args = %w[--tag fast --format json --out tmp/%{n}/out.json -fdoc --order rand -- spec/a spec/b]
       expect(supervisor(config: config.with(rspec_args: args)).run).to eq(0)
       expect(recorded("w.1")["rspec_args"])
-        .to eq(%w[--format json --out tmp//out.json --format doc --tag fast --order rand -- spec/a spec/b])
+        .to eq(%w[--format json --out tmp//out.json --format doc --out tmp/rspec-hopper/w-1-doc.txt
+                  --tag fast --order rand -- spec/a spec/b])
       expect(recorded("w.2")["rspec_args"])
-        .to eq(%w[--format json --out tmp/2/out.json --format doc --tag fast --order rand -- spec/a spec/b])
+        .to eq(%w[--format json --out tmp/2/out.json --format doc --out tmp/rspec-hopper/w-2-doc.txt
+                  --tag fast --order rand -- spec/a spec/b])
+    end
+
+    it "gives a child with no formatter options of its own a file, so nothing prints to the console" do
+      expect(supervisor.run).to eq(0)
+      expect(recorded("w.1")["rspec_args"].first(4))
+        .to eq(%w[--format progress --out tmp/rspec-hopper/w-1-progress.txt])
+      expect(recorded("w.2")["rspec_args"].first(4))
+        .to eq(%w[--format progress --out tmp/rspec-hopper/w-2-progress.txt])
+    end
+
+    it "says where the generated output went" do
+      supervisor.run
+      expect(err.string).to include("[hopper w] formatter output: tmp/rspec-hopper/")
+      expect(err.string).to include("verdict comes from `rspec-hopper report`")
+    end
+
+    it "stays quiet about generated output when every formatter already has an --out" do
+      args = %w[--format json --out tmp/%{n}/out.json]
+      supervisor(config: config.with(rspec_args: args)).run
+      expect(err.string).not_to include("formatter output:")
     end
 
     it "uses the parent's queue factory builder for each child" do
@@ -165,7 +187,7 @@ RSpec.describe RSpec::Hopper::Supervisor do
     it "derives the child's config without forking" do
       child = supervisor.child_config(2, %w[spec/a], [%w[--out r-%{n}.xml]])
       expect(child.to_h).to include(worker_id: "w.2", supervised: true, processes: 1, build_id: "b1",
-                                    rspec_args: %w[--out r-2.xml spec/a])
+                                    rspec_args: %w[--format progress --out r-2.xml spec/a])
       expect(described_class.env_number(1)).to eq("")
       expect(described_class.env_number(3)).to eq("3")
     end
@@ -209,7 +231,8 @@ RSpec.describe RSpec::Hopper::Supervisor do
       second = recorded("w.2")
       expect(first["after_fork_calls"]).to eq([["", first["pid"]]])
       expect(second["after_fork_calls"]).to eq([["2", second["pid"]]])
-      expect(first).to include("env_number" => "", "suite" => "the_suite", "rspec_args" => %w[--format json --tag fast])
+      expect(first).to include("env_number" => "", "suite" => "the_suite",
+                               "rspec_args" => %w[--format json --out tmp/rspec-hopper/w-1-json.json --tag fast])
       expect(second).to include("env_number" => "2", "suite" => "the_suite")
     end
 

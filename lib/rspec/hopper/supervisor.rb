@@ -43,6 +43,7 @@ module RSpec
         end
 
         remaining, formatter_pairs = CLI::FormatterArgs.split(@config.rspec_args)
+        announce_formatter_output(formatter_pairs)
         suite = @config.boot == :shared ? load_shared_suite(remaining) : nil
         with_signal_forwarding do
           1.upto(@config.processes) { |number| start_child(number, remaining, formatter_pairs, suite) }
@@ -54,6 +55,15 @@ module RSpec
         e.exit_code
       end
 
+      # Children write their formatter output to files, so nothing here prints
+      # an RSpec summary per process; the verdict comes from `report`.
+      def announce_formatter_output(formatter_pairs)
+        return unless CLI::FormatterArgs.defaults_needed?(formatter_pairs)
+
+        log("formatter output: #{CLI::FormatterArgs::DEFAULT_DIR}/ " \
+            "(the build verdict comes from `rspec-hopper report`)")
+      end
+
       # The value of TEST_ENV_NUMBER for child `number` (1-based): "" for the
       # first, then "2".."N", matching parallel_tests.
       def self.env_number(number) = number == 1 ? "" : number.to_s
@@ -63,9 +73,11 @@ module RSpec
       # The config child `number` runs with; public so specs can assert on it.
       def child_config(number, remaining, formatter_pairs)
         env_number = self.class.env_number(number)
+        worker_id = child_worker_id(number)
+        child_args = CLI::FormatterArgs.for_child(formatter_pairs, env_number, label: worker_id)
         @config.with(
-          worker_id: child_worker_id(number), supervised: true, processes: 1,
-          rspec_args: (CLI::FormatterArgs.for_child(formatter_pairs, env_number) + remaining).freeze
+          worker_id: worker_id, supervised: true, processes: 1,
+          rspec_args: (child_args + remaining).freeze
         )
       end
 

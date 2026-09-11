@@ -142,6 +142,28 @@ RSpec.describe "--processes N", :integration, :redis do
       expect(outputs.sum { |o| o["summary"]["example_count"] }).to eq(7)
       expect(outputs.sum { |o| o["summary"]["failure_count"] }).to eq(0)
     end
+
+    it "writes each child to its own file by default and prints no per-process summary" do
+      hopper_tmp = File.join(HopperSpec::Fixtures.path("all-pass"), "tmp")
+      FileUtils.rm_rf(hopper_tmp)
+      parent = run_parent("all-pass")
+      expect(parent.exit_code).to eq(0)
+
+      # The console carries hopper's own narration and nothing from RSpec: a
+      # per-process summary describes a fragment of the build, and an idle
+      # child would announce "0 examples, 0 failures". `report` has the verdict.
+      expect(parent.stdout).to match(/\[hopper w\.\d\] (initialized|joined) build/)
+      expect(parent.stdout).not_to match(/\d+ examples?, \d+ failures?/)
+      expect(parent.stderr).to include("formatter output: tmp/rspec-hopper/")
+
+      written = Dir[File.join(hopper_tmp, "rspec-hopper", "*")].map { |path| File.basename(path) }.sort
+      expect(written).to eq(%w[w-1-progress.txt w-2-progress.txt])
+      summaries = written.map { |name| File.read(File.join(hopper_tmp, "rspec-hopper", name)) }
+      expect(summaries.join).to match(/\d+ examples?, 0 failures/)
+      expect(run_report.exit_code).to eq(0)
+    ensure
+      FileUtils.rm_rf(hopper_tmp) if hopper_tmp
+    end
   end
 
   describe "a SIGKILLed child" do
