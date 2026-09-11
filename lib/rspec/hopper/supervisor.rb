@@ -109,7 +109,14 @@ module RSpec
       end
 
       def run_child(config, env_number, suite)
-        FORWARDED_SIGNALS.each { |sig| trap(sig, "DEFAULT") }
+        # SYSTEM_DEFAULT, not DEFAULT: Ruby's own default handling for INT and
+        # TERM raises Interrupt/SignalException, which prints a stack trace per
+        # child before re-signalling. A forwarded signal would therefore bury
+        # the run in N backtraces, and an Interrupt raised inside a unit would
+        # be caught as a non-requeueable failure rather than stopping the
+        # child. The OS default ends the child silently with the same wait
+        # status, which is what the parent reports.
+        FORWARDED_SIGNALS.each { |sig| trap(sig, "SYSTEM_DEFAULT") }
         @env["TEST_ENV_NUMBER"] = env_number
         RSpec::Hopper.after_fork_hooks.each { |hook| hook.call(env_number) } if @config.boot == :shared
         kwargs = { config: config, queue_factory: queue_factory_for.call(config), out: @out, err: @err }

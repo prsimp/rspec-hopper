@@ -43,13 +43,22 @@ RSpec.describe RSpec::Hopper::Supervisor do
                                                         "suite" => @suite.to_s,
                                                         "queue_factory" => @queue_factory.class.name,
                                                         "after_fork_calls" => hook_calls,
-                                                        "pid" => Process.pid
+                                                        "pid" => Process.pid,
+                                                        "int_handler" => current_handler("INT"),
+                                                        "term_handler" => current_handler("TERM")
                                                       ))
         case (action = plan.fetch(@config.worker_id))
         when :kill then Process.kill("KILL", Process.pid)
         when :sleep then sleep
         else action
         end
+      end
+
+      # `trap` is the only way to read a disposition, so set and restore it.
+      def current_handler(signal)
+        handler = trap(signal, "IGNORE")
+        trap(signal, handler)
+        handler
       end
     end
   end
@@ -260,6 +269,12 @@ RSpec.describe RSpec::Hopper::Supervisor do
       expect(runner.join(10)).not_to be_nil, "supervisor did not return after INT"
       expect(runner.value).to eq(2)
       expect(err.string.scan("killed by SIGINT").size).to eq(2)
+    end
+
+    it "leaves children on the system default so a forwarded signal prints no backtrace" do
+      expect(supervisor.run).to eq(0)
+      expect(recorded("w.1")).to include("int_handler" => "SYSTEM_DEFAULT", "term_handler" => "SYSTEM_DEFAULT")
+      expect(recorded("w.2")).to include("int_handler" => "SYSTEM_DEFAULT", "term_handler" => "SYSTEM_DEFAULT")
     end
 
     it "restores the previous INT and TERM handlers" do
