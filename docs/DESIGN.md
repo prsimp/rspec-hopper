@@ -72,9 +72,9 @@ single field `json`.
 `total_examples`, `file_counts` (JSON object path -> int), `file_args` (JSON array),
 `fingerprint`, `seed`, `revision` (may be absent), `load_errors` (JSON array of strings),
 `max_requeues`, `requeue_tolerance`, `max_reclaims`, `timeout`, `ttl`. The budget
-values are frozen into meta at initialization so every worker's transition script
-enforces the same caps regardless of its own flags; a worker whose flags differ is
-not an error (the initializer's values win), but the CLI prints a warning.
+values are frozen into meta at initialization; the transition script reads them from
+`meta` first and falls back to ARGV only when the field is absent, so every worker
+enforces the initializer's caps regardless of its own flags. No warning is printed.
 
 TTL rules: every key except `leader` and `exists` gets `PEXPIRE ttl_ms` inside the same
 Lua script or MULTI that writes it. `leader` has `EX 60`; `exists` has
@@ -146,11 +146,13 @@ Modes and returns (arrays; first element is a status string):
   `failed`, reason `retry_budget_exhausted`, and return `{"FINALIZED", retry_index}`.
   Otherwise: if not entered_retry, set it and `HINCRBY meta requeued_units_count 1`;
   retry_index += 1; write unit_state; XACK old entry; XADD `units:priority` `id`, `type`;
-  append `requeued` (carries `failure_summary`, `errors`); HSET workers[worker_id]
-  current_unit null, processed+1. Returns `{"REQUEUED", new_retry_index}`.
+  append `requeued` (carries `failure_summary`, `errors`, `previous_retry_index`; its
+  `retry_index` is the post-increment value); HSET workers[worker_id] current_unit null,
+  processed+1. Returns `{"REQUEUED", new_retry_index}`.
 * `liveness` ARGV: current_unit (may be empty). HSET workers[worker_id] last_seen (+
   current_unit) and PEXPIRE live keys. Returns `{"OK"}`. (Idle-loop liveness; the spec's
   "atomically with a TTL renewal".) If `meta` is missing return `{"CORRUPT"}`.
+* `abandoned` ARGV: handle + elapsed_ms. Fenced; appends `abandoned`. Returns `{"OK"}`.
 * `worker_error` ARGV: json event (built in Ruby, the script only stamps `at_ms`),
   appends to attempts, PEXPIRE. Returns `{"OK"}`. Does not check meta (may be called
   before ready, e.g. boot errors after another worker initialized; if `attempts` does not
@@ -233,8 +235,8 @@ A unit reclaimed and then passing with no `requeued` event is not flaky.
 ## Manifest
 
 `Manifest = Data.define(:total_units, :total_examples, :file_counts, :file_args,
-:fingerprint, :seed, :ready_at, :revision, :load_errors, :unit_ids)` — `unit_ids` are the
-keys of `file_counts` in order (not stored separately; `total_units == unit_ids.size`).
+:fingerprint, :seed, :ready_at, :revision, :load_errors)` — `#unit_ids` is derived: the
+keys of `file_counts` in order (`total_units == unit_ids.size`).
 `#to_meta` -> Hash of String->String for HSET (JSON-encoding the nested fields);
 `Manifest.from_meta(hash)` inverse (ignores the extra runtime fields). `ready_at` is
 epoch ms set by Redis; before publication it's nil.
@@ -340,7 +342,9 @@ default is 1080 s. JSON summary schema:
  "worker_errors": [...], "stale_rejections": 0, "workers": {...}, "load_errors": [...],
  "file_args": [...], "seed": 1234, "fingerprint": "...", "revision": null}
 ```
-`--failed-out` writes one unit id per line (failed + never_finalized).
+The summary also carries a `message` headline, and the verdict `unreachable` (exit 2)
+when Redis cannot be reached. `--failed-out` writes one unit id per line (failed +
+never_finalized).
 
 ## Config
 
