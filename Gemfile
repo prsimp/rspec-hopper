@@ -2,12 +2,16 @@
 
 source "https://rubygems.org"
 
-# Specify your gem's dependencies in rspec-hopper.gemspec
 gemspec
 
 gem "irb"
 gem "rake", "~> 13.0"
 
-gem "rspec", "~> 3.0"
+gem "rspec", "~> 3.13"
 
 gem "rubocop", "~> 1.21"
+gem "rubocop-rake", require: false
+gem "rubocop-rspec", require: false
+
+# Loaded only by the Example-prepend coexistence contract spec.
+gem "datadog-ci", require: false

@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Starts a throwaway Redis on port 6399 for the spec suite (no persistence).
+# Usage: bin/test-redis [start|stop]
+set -euo pipefail
+
+port="${HOPPER_TEST_REDIS_PORT:-6399}"
+dir="${TMPDIR:-/tmp}/rspec-hopper-redis-${port}"
+mkdir -p "$dir"
+
+case "${1:-start}" in
+  start)
+    if redis-cli -p "$port" ping >/dev/null 2>&1; then
+      echo "redis already running on port $port"
+      exit 0
+    fi
+    redis-server --port "$port" --save "" --appendonly no --daemonize yes \
+      --pidfile "$dir/redis.pid" --logfile "$dir/redis.log" --dir "$dir"
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      redis-cli -p "$port" ping >/dev/null 2>&1 && break
+      sleep 0.2
+    done
+    redis-cli -p "$port" ping
+    ;;
+  stop)
+    redis-cli -p "$port" shutdown nosave 2>/dev/null || true
+    ;;
+  *)
+    echo "usage: $0 [start|stop]" >&2
+    exit 64
+    ;;
+esac
