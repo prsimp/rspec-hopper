@@ -49,7 +49,24 @@ module RSpec
         # the project directory (locations are absolute) is replaced by ".".
         def render_rules(rules)
           project_dir = File.expand_path(".")
-          rules.map { |key, value| "#{key}=#{value.inspect}".gsub(PROC_ADDRESS, "").gsub(project_dir, ".") }.sort
+          rules.map { |key, value| "#{key}=#{render_value(value)}".gsub(PROC_ADDRESS, "").gsub(project_dir, ".") }.sort
+        end
+
+        # Renders a filter value without going through the built-in `inspect`
+        # for containers. Ruby 3.4 changed `Hash#inspect` from `{"a"=>1}` to
+        # `{"a" => 1}`, which would otherwise make the same suite fingerprint
+        # differently on either side of that release. Hash pairs are sorted so
+        # insertion order cannot change the result either.
+        def render_value(value)
+          case value
+          when Hash
+            pairs = value.map { |k, v| "#{render_value(k)} => #{render_value(v)}" }.sort
+            "{#{pairs.join(", ")}}"
+          when Array
+            "[#{value.map { |element| render_value(element) }.join(", ")}]"
+          else
+            value.inspect
+          end
         end
 
         def canonical(object)
