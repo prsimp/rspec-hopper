@@ -224,7 +224,7 @@ module RSpec
         abandoned = attempt_log.abandoned
         out.puts "  abandoned (exceeded --max-unit-duration): #{abandoned.join(", ")}" if abandoned.any?
         attempt_log.worker_errors.each do |e|
-          out.puts "  worker error: #{e["worker_id"]} #{e["phase"]} #{e["error_class"]}: #{e["message"]}"
+          out.puts "  worker error: #{e["worker_id"]} #{e["phase"]} #{e["class"]}: #{e["message"]}"
         end
       end
 

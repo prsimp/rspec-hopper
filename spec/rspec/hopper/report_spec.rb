@@ -381,7 +381,7 @@ RSpec.describe RSpec::Hopper::Report do
                            reason: "test_failure", duration_ms: 1, errors: errors),
         event("stale_rejected", unit_id: b, worker_id: "w2", reclaim_count: 1, operation: "finalize"),
         event("delivered", unit_id: c, worker_id: "w1"),
-        { "type" => "worker_error", "worker_id" => "w4", "phase" => "boot", "error_class" => "LoadError",
+        { "type" => "worker_error", "worker_id" => "w4", "phase" => "boot", "class" => "LoadError",
           "message" => "cannot load such file", "backtrace" => [], "unit_id" => nil, "at_ms" => ready_at }
       ]
     end
@@ -409,7 +409,7 @@ RSpec.describe RSpec::Hopper::Report do
       expect(summary["failed"]).to eq([{ "unit_id" => "./spec/b_spec.rb", "reason" => "test_failure",
                                          "worker_id" => "w3", "errors" => errors }])
       expect(summary["never_finalized"]).to eq([{ "unit_id" => "./spec/c_spec.rb", "last_worker_id" => "w1" }])
-      expect(summary["worker_errors"].map { |e| e["error_class"] }).to eq(["LoadError"])
+      expect(summary["worker_errors"].map { |e| e["class"] }).to eq(["LoadError"])
       expect(out.string).to include("flaky (passed after requeue): ./spec/a_spec.rb")
       expect(out.string).to include("abandoned (exceeded --max-unit-duration): ./spec/b_spec.rb")
       expect(out.string).to include("worker error: w4 boot LoadError: cannot load such file")
