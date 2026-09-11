@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# Fixture: flaky_spec.rb fails on attempts 1 and 2 and passes from attempt 3, counting attempts in HOPPER_FIXTURE_STATE_DIR so retries by different processes share the count (retried attempts sleep HOPPER_FIXTURE_RETRY_SLEEP seconds, default 0); stable_spec.rb always passes.
+# Fixture: flaky_a_spec.rb and flaky_b_spec.rb each fail on their first attempt and pass from the second (attempts counted per file in HOPPER_FIXTURE_STATE_DIR); stable_spec.rb always passes. Three units, so a --requeue-tolerance of 0.3 lets exactly one of them enter retry.
 
 require "tmpdir"
 
