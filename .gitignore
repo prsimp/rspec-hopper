@@ -6,9 +6,11 @@
 /pkg/
 /spec/reports/
 /tmp/
+tmp/
+
+# A library resolves its dependencies fresh on every supported Ruby, so the
+# lockfile is not committed.
+/Gemfile.lock
 
 # rspec failure tracking
 .rspec_status
-
-.rspec_status
-tmp/
