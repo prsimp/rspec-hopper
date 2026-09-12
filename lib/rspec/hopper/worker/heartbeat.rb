@@ -53,6 +53,10 @@ module RSpec
           prime
           @thread = Thread.new { run_loop }
           @thread.name = "hopper-heartbeat" if @thread.respond_to?(:name=)
+          # Giving up on renewals re-raises through `join` in `stop`, where the
+          # worker turns it into one message and exit 2. Ruby's own report would
+          # only add a bare backtrace ahead of it.
+          @thread.report_on_exception = false
           self
         end
 
