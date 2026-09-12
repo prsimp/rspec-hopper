@@ -498,6 +498,18 @@ Integration specs under `spec/integration` spawn real `rspec-hopper` processes a
 the fixture suites in `spec/fixtures/suites`. CI runs the suite on Ruby 3.2 through
 4.0 against Redis 7, plus Redis 6.2 and Valkey on the newest Ruby.
 
+### Releasing
+
+Bump `RSpec::Hopper::VERSION`, move the changelog's `Unreleased` entries under the new
+version, merge that to `main`, then run the **Release** workflow from `main`
+(`gh workflow run release.yml`). It runs `bundle exec rake` against Redis, then
+`rake release`, which tags `v<version>`, pushes the tag and pushes the gem to
+RubyGems.org through [trusted publishing][], so there is no API key anywhere. The
+workflow refuses to run from any branch but `main`, and `rake release` refuses a dirty
+tree or a version that is already tagged.
+
+[trusted publishing]: https://guides.rubygems.org/trusted-publishing/
+
 ## Phase 1 non-goals
 
 - Example-level units or splitting slow files; a unit is a whole spec file.
