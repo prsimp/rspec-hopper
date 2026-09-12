@@ -25,10 +25,14 @@ module RSpec
       # their descendants. Returns the number of examples reset.
       def reset(example_groups)
         Array(example_groups).sum do |group|
-          group.descendants.sum do |descendant|
-            descendant.filtered_examples.each { |example| reset_example(example) }.size
-          end
+          group.descendants.sum { |descendant| reset_examples(descendant.filtered_examples) }
         end
+      end
+
+      # Resets exactly the given examples (an example unit's single example).
+      # Returns the number of examples reset.
+      def reset_examples(examples)
+        Array(examples).each { |example| reset_example(example) }.size
       end
 
       def reset_example(example)

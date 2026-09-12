@@ -6,7 +6,8 @@ require_relative "worker/runner"
 module RSpec
   module Hopper
     # The RSpec adapter: loads the suite, joins or initializes the build, pulls
-    # units, runs each through `ExampleGroup.run`, decides requeue from the
+    # units, runs each through `ExampleGroup.run` (a file's groups, or one
+    # example narrowed within its group), decides requeue from the
     # execution results and forwards final attempts to the formatters.
     class Worker
       POLL_INTERVAL = 0.5
@@ -176,7 +177,7 @@ module RSpec
         outcome = phase(:execution, unit_id: unit_id) do
           raise InfrastructureError, "unit #{unit_id} is not part of this worker's suite" if groups.empty?
 
-          run_groups(groups, buffer, reservation)
+          run_unit(buffer, reservation)
         end
         decision = RequeuePolicy.decide(examples, escaped: outcome.escaped)
         phase(:execution, unit_id: unit_id) do
@@ -191,15 +192,14 @@ module RSpec
         alert "#{outcome.escaped.class} escaped an example in #{unit_id}; the unit was finalized as failed"
       end
 
-      def run_groups(groups, buffer, reservation)
-        ExampleReset.reset(groups)
+      def run_unit(buffer, reservation)
         heartbeat = Heartbeat.new(queue: queue, reservation: reservation, config: config, err: @err, clock: @clock,
                                   aborter: @aborter, worker_id: worker_id)
         started = @clock.call
         escaped = nil
         heartbeat.start
         begin
-          groups.each { |group| group.run(buffer) }
+          suite.run_unit(reservation.unit_id, buffer)
         rescue *RequeuePolicy::NON_REQUEUEABLE => e
           escaped = e
         ensure

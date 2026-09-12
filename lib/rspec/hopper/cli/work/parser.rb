@@ -73,6 +73,7 @@ module RSpec
             OptionParser.new do |o|
               o.banner = BANNER
               identity_options(o)
+              unit_options(o)
               policy_options(o)
               process_options(o)
               lifetime_options(o)
@@ -88,6 +89,14 @@ module RSpec
             opt.on("--worker WID", "this worker's id, unique within the build") { |v| @opts[:worker_id] = v }
             opt.on("--redis URL", "Redis URL") { |v| @opts[:redis_url] = v }
             opt.on("--revision SHA", "revision string mixed into the suite fingerprint") { |v| @opts[:revision] = v }
+          end
+
+          def unit_options(opt)
+            opt.separator ""
+            opt.separator "Work units:"
+            opt.on("--unit TYPE", UNIT_TYPES, "what one queue entry is: file (default) or example") do |v|
+              @opts[:unit_type] = v
+            end
           end
 
           def policy_options(opt)

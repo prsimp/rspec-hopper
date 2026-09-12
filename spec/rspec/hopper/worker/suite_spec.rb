@@ -220,6 +220,81 @@ RSpec.describe RSpec::Hopper::Worker::Suite do
     end
   end
 
+  describe "example units (--unit example)" do
+    let(:example_config) { work_config(unit_type: "example") }
+    let(:defined_order) do
+      %w[./spec/all_slow_spec.rb[1:1] ./spec/models/model_spec.rb[1:1] ./spec/models/model_spec.rb[1:2]
+         ./spec/nested_spec.rb[1:1] ./spec/nested_spec.rb[1:2:1] ./spec/nested_spec.rb[1:2:2]
+         ./spec/two_groups_spec.rb[1:1] ./spec/two_groups_spec.rb[1:2] ./spec/two_groups_spec.rb[2:1]]
+    end
+
+    it "discovers one unit per selected example, in RSpec's defined order, keeping the file counts" do
+      with_project(files) do
+        suite = load_suite(["--order", "defined"], config: example_config)
+        expect(suite.unit_ids).to eq(defined_order)
+        expect(suite.units).to all(be_a(RSpec::Hopper::Unit).and(have_attributes(type: "example")))
+        expect(suite.unit_type).to eq("example")
+        expect(suite.file_counts.values.sum).to eq(9)
+        expect(suite.total_examples).to eq(9)
+        expect(suite.fingerprint.inputs["unit_type"]).to eq("example")
+      end
+    end
+
+    it "orders the units the way RSpec would run them under the seed, so --order rand still applies" do
+      with_project(files) do
+        suite = load_suite(["--order", "rand", "--seed", "3"], config: example_config)
+        expect(suite.unit_ids).not_to eq(defined_order)
+        expect(suite.unit_ids.sort).to eq(defined_order)
+        expected = suite.world.ordered_example_groups.flat_map do |group|
+          suite.send(:ordered_examples, group).map(&:id)
+        end
+        expect(suite.unit_ids).to eq(expected)
+      end
+    end
+
+    it "selects only filtered examples" do
+      with_project(files) do
+        suite = load_suite(["--tag", "slow", "--order", "defined"], config: example_config)
+        expect(suite.unit_ids).to eq(%w[./spec/all_slow_spec.rb[1:1] ./spec/nested_spec.rb[1:2:2]])
+      end
+    end
+
+    it "maps a unit to its top-level group and its one example" do
+      with_project(files) do
+        suite = load_suite(["--order", "defined"], config: example_config)
+        groups = suite.groups_for("./spec/nested_spec.rb[1:2:1]")
+        expect(groups.map(&:description)).to eq(["nested"])
+        expect(suite.examples_for("./spec/nested_spec.rb[1:2:1]").map(&:description)).to eq(["deep"])
+        expect(suite.groups_for("./spec/nested_spec.rb")).to eq([])
+        expect(suite.examples_for("./spec/nested_spec.rb")).to eq([])
+      end
+    end
+
+    it "runs exactly the unit's example through its file's group" do
+      with_project(files) do
+        suite = load_suite(["--order", "defined"], config: example_config)
+        buffer = RSpec::Hopper::Worker::BufferingReporter.new
+        suite.run_unit("./spec/nested_spec.rb[1:2:1]", buffer)
+        started = buffer.events.filter_map { |name, args| args.first.id if name == :example_started }
+        expect(started).to eq(["./spec/nested_spec.rb[1:2:1]"])
+        statuses = suite.groups_for("./spec/nested_spec.rb[1:2:1]").first.descendant_filtered_examples
+                        .to_h { |ex| [ex.id, ex.execution_result.status] }
+        expect(statuses).to eq("./spec/nested_spec.rb[1:1]" => nil, "./spec/nested_spec.rb[1:2:1]" => :passed,
+                               "./spec/nested_spec.rb[1:2:2]" => nil)
+      end
+    end
+
+    it "publishes the unit type and ids in the manifest" do
+      with_project(files) do
+        suite = load_suite(["--order", "defined"], config: example_config)
+        manifest = suite.to_manifest
+        expect(manifest).to have_attributes(unit_type: "example", total_units: 9, total_examples: 9,
+                                            unit_ids: defined_order)
+        expect(manifest.file_counts).to eq(suite.file_counts)
+      end
+    end
+  end
+
   describe ".runner_wrappers" do
     let(:wrapped) do
       mod = Module.new do

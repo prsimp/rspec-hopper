@@ -183,7 +183,7 @@ RSpec.describe RSpec::Hopper::Report do
 
       expect(report.run(out: out)).to eq(0)
       expect(out.string).to include("build-42: passed")
-      expect(out.string).to include("units: 3 total, 3 finalized; examples: 30 selected")
+      expect(out.string).to include("units: 3 file units total, 3 finalized; examples: 30 selected")
       expect(clocks.slept).to eq([1.0, 1.0])
       expect(report.summary).to include("verdict" => "passed", "exit_code" => 0, "state" => "ready",
                                         "finalized_count" => 3, "total_units" => 3, "total_examples" => 30)
@@ -404,13 +404,14 @@ RSpec.describe RSpec::Hopper::Report do
       summary = report.summary
 
       expect(summary.keys).to contain_exactly(
-        "build_id", "state", "verdict", "exit_code", "message", "total_units", "total_examples", "finalized_count",
+        "build_id", "state", "verdict", "exit_code", "message", "total_units", "unit_type", "total_examples",
+        "finalized_count",
         "failed", "flaky", "never_finalized", "abandoned", "retry_counts", "reclaim_counts", "worker_errors",
         "stale_rejections", "workers", "load_errors", "file_args", "seed", "fingerprint", "revision"
       )
       expect(summary).to include(
         "build_id" => "build-42", "state" => "ready", "verdict" => "incomplete", "exit_code" => 3,
-        "total_units" => 3, "total_examples" => 30, "finalized_count" => 2,
+        "total_units" => 3, "unit_type" => "file", "total_examples" => 30, "finalized_count" => 2,
         "flaky" => ["./spec/a_spec.rb"], "abandoned" => ["./spec/b_spec.rb"],
         "retry_counts" => { "./spec/a_spec.rb" => 1 }, "reclaim_counts" => { "./spec/b_spec.rb" => 2 },
         "stale_rejections" => 1, "workers" => workers, "load_errors" => [], "file_args" => file_args,

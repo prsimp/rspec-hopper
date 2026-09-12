@@ -60,6 +60,7 @@ module HopperSpec
     def initialize_build(token:, manifest:, unit_ids:)
       check_initialization!(token)
       @streams.each_value(&:clear)
+      @unit_type = manifest.unit_type
       unit_ids.each do |id|
         @streams["units"] << new_entry(id, "units")
         @unit_states[id] = { "retry_index" => 0, "reclaim_count" => 0, "entered_retry" => false }
@@ -252,7 +253,8 @@ module HopperSpec
     def meta! = @meta || raise(BuildStateMissing, "meta missing")
 
     def new_entry(unit_id, stream)
-      Entry.new(entry_id: "#{now_ms}-#{@next_id += 1}", unit_id: unit_id, unit_type: "file", stream: stream,
+      Entry.new(entry_id: "#{now_ms}-#{@next_id += 1}", unit_id: unit_id, unit_type: @unit_type || "file",
+                stream: stream,
                 consumer: nil, delivery_count: 0, acked: false)
     end
 

@@ -236,7 +236,7 @@ module RSpec
 
         def init_script(mode, token, manifest, unit_ids_json)
           fields = manifest.to_meta.merge(budget_meta)
-          argv = [mode, token, ms(ttl), ms(tombstone_ttl), JSON.generate(fields), unit_ids_json, "file"]
+          argv = [mode, token, ms(ttl), ms(tombstone_ttl), JSON.generate(fields), unit_ids_json, manifest.unit_type]
           run_script(:init, init_keys, argv)
         rescue Redis::CommandError => e
           code = e.message[/\A(?:ERR\s+)?([A-Z_]+)/, 1]
