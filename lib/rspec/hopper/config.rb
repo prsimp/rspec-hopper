@@ -6,7 +6,7 @@ module RSpec
     # collaborator; there is no global.
     WorkConfig = Data.define(
       :build_id, :worker_id, :redis_url,
-      :timeout, :max_unit_duration, :max_requeues, :requeue_tolerance, :max_reclaims,
+      :unit_type, :timeout, :max_unit_duration, :max_requeues, :requeue_tolerance, :max_reclaims,
       :processes, :boot, :report_on_exit,
       :ttl, :tombstone_ttl, :init_timeout, :revision,
       :rspec_args, :report_args, :supervised
@@ -18,6 +18,8 @@ module RSpec
       def heartbeat_interval
         [timeout / 3.0, 30.0].min
       end
+
+      def example_units? = unit_type == "example"
     end
 
     # Frozen configuration for the `report` subcommand.
@@ -32,7 +34,7 @@ module RSpec
 
     module Config
       WORK_DEFAULTS = {
-        build_id: nil, worker_id: nil, redis_url: nil,
+        build_id: nil, worker_id: nil, redis_url: nil, unit_type: "file",
         timeout: 180, max_unit_duration: 900, max_requeues: 0, requeue_tolerance: 0.0, max_reclaims: 3,
         processes: 1, boot: :per_process, report_on_exit: false,
         ttl: 14_400, tombstone_ttl: 604_800, init_timeout: 300, revision: nil,

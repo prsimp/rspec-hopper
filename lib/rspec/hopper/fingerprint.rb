@@ -8,9 +8,9 @@ module RSpec
     # Proves that workers loaded the same logical suite, not merely that they were
     # given the same arguments. Computed after loading, over the normalized
     # selection inputs, the ordering strategy name (never the seed), the sorted
-    # selected example ids and the optional revision string.
+    # selected example ids, the optional revision string and the unit type.
     class Fingerprint
-      INPUT_KEYS = %w[file_args filter pattern exclude_pattern order example_ids revision].freeze
+      INPUT_KEYS = %w[file_args filter pattern exclude_pattern order example_ids revision unit_type].freeze
       PROC_ADDRESS = /0x[0-9a-f]+@?/
       # Per-input digests are recorded in the manifest so a mismatching worker
       # can name the inputs that differ. Truncated: they are compared with each
@@ -25,7 +25,8 @@ module RSpec
         # @param example_ids [Array<String>] ids of the selected examples
         # @param file_args [Array<String>] normalized file arguments
         # @param revision [String, nil]
-        def compute(configuration:, options:, example_ids:, file_args:, revision: nil)
+        # @param unit_type [String] "file" or "example"; a build has one unit type
+        def compute(configuration:, options:, example_ids:, file_args:, revision: nil, unit_type: "file")
           filter_manager = configuration.filter_manager
           new(
             "file_args" => Array(file_args).map(&:to_s).sort,
@@ -37,7 +38,8 @@ module RSpec
             "exclude_pattern" => configuration.exclude_pattern.to_s,
             "order" => ordering_name(options.options[:order]),
             "example_ids" => Array(example_ids).map(&:to_s).sort,
-            "revision" => revision&.to_s
+            "revision" => revision&.to_s,
+            "unit_type" => unit_type.to_s
           )
         end
 
@@ -123,7 +125,8 @@ module RSpec
           "exclude_pattern=#{inputs["exclude_pattern"].inspect}",
           "order=#{inputs["order"]}",
           "example_ids=#{inputs["example_ids"].size}",
-          "revision=#{inputs["revision"].inspect}"
+          "revision=#{inputs["revision"].inspect}",
+          "unit_type=#{inputs["unit_type"]}"
         ].join(", ")
       end
 

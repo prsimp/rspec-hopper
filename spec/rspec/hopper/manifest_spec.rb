@@ -2,6 +2,9 @@
 
 RSpec.describe RSpec::Hopper::Manifest do
   let(:file_counts) { { "./spec/a_spec.rb" => 3, "./spec/b_spec.rb" => 2 } }
+  let(:example_ids) do
+    %w[./spec/a_spec.rb[1:1] ./spec/a_spec.rb[1:2] ./spec/a_spec.rb[1:3] ./spec/b_spec.rb[1:1] ./spec/b_spec.rb[1:2]]
+  end
   let(:manifest) do
     described_class.new(
       total_units: 2, total_examples: 5, file_counts: file_counts, file_args: %w[spec/a_spec.rb spec/b_spec.rb],
@@ -22,11 +25,39 @@ RSpec.describe RSpec::Hopper::Manifest do
       expect(m.load_errors).to eq([])
     end
 
-    it "rejects total_units that disagrees with file_counts" do
+    it "rejects total_units that disagrees with the number of units" do
       expect do
         described_class.new(total_units: 3, total_examples: 5, file_counts: file_counts, file_args: [],
                             fingerprint: "f", seed: 1)
-      end.to raise_error(ArgumentError, /total_units \(3\) does not match file_counts.size \(2\)/)
+      end.to raise_error(ArgumentError, /total_units \(3\) does not match the number of unit ids \(2\)/)
+    end
+
+    it "defaults to file units" do
+      expect(manifest.unit_type).to eq("file")
+      expect(manifest).to be_file_units
+      expect(manifest).not_to be_example_units
+    end
+
+    it "takes explicit unit ids for example units and counts them" do
+      m = described_class.new(total_examples: 5, file_counts: file_counts, file_args: [], unit_type: "example",
+                              unit_ids: example_ids)
+      expect(m).to be_example_units
+      expect(m.unit_ids).to eq(example_ids)
+      expect(m.unit_ids).to be_frozen
+      expect(m.total_units).to eq(5)
+      expect(m.file_counts).to eq(file_counts)
+    end
+
+    it "requires unit ids for example units" do
+      expect do
+        described_class.new(total_examples: 5, file_counts: file_counts, file_args: [], unit_type: "example")
+      end.to raise_error(ArgumentError, /unit_ids are required for example units/)
+    end
+
+    it "rejects an unknown unit type" do
+      expect do
+        described_class.new(total_examples: 5, file_counts: file_counts, file_args: [], unit_type: "group")
+      end.to raise_error(ArgumentError, /unknown unit type "group"/)
     end
 
     it "coerces numeric strings and freezes nested collections" do
@@ -50,6 +81,7 @@ RSpec.describe RSpec::Hopper::Manifest do
       expect(meta).to eq(
         "total_units" => "2",
         "total_examples" => "5",
+        "unit_type" => "file",
         "file_counts" => '{"./spec/a_spec.rb":3,"./spec/b_spec.rb":2}',
         "file_args" => '["spec/a_spec.rb","spec/b_spec.rb"]',
         "load_errors" => "[]",
@@ -60,6 +92,14 @@ RSpec.describe RSpec::Hopper::Manifest do
       )
       expect(meta.keys).to all(be_a(String))
       expect(meta.values).to all(be_a(String))
+    end
+
+    it "writes unit_ids only for example units" do
+      expect(manifest.to_meta).not_to have_key("unit_ids")
+      m = described_class.new(total_examples: 5, file_counts: file_counts, file_args: [], unit_type: "example",
+                              unit_ids: example_ids)
+      expect(m.to_meta).to include("unit_type" => "example", "total_units" => "5",
+                                   "unit_ids" => JSON.generate(example_ids))
     end
 
     it "omits revision and ready_at when nil" do
@@ -96,6 +136,17 @@ RSpec.describe RSpec::Hopper::Manifest do
   describe ".from_meta" do
     it "round-trips through to_meta" do
       expect(described_class.from_meta(manifest.to_meta)).to eq(manifest)
+    end
+
+    it "round-trips example units" do
+      m = described_class.new(total_examples: 5, file_counts: file_counts, file_args: [], unit_type: "example",
+                              unit_ids: example_ids, fingerprint: "f", seed: 1)
+      expect(described_class.from_meta(m.to_meta)).to eq(m)
+    end
+
+    it "reads meta written by a worker that predates unit types as file units" do
+      legacy = manifest.to_meta.except("unit_type")
+      expect(described_class.from_meta(legacy)).to eq(manifest)
     end
 
     it "tolerates the runtime fields HGETALL returns alongside the manifest" do

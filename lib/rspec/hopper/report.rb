@@ -215,7 +215,8 @@ module RSpec
         return "unknown (no manifest)" unless @manifest
 
         finalized = @finalized_count.nil? ? "" : ", #{@finalized_count} finalized"
-        "#{@manifest.total_units} total#{finalized}; examples: #{@manifest.total_examples} selected"
+        "#{@manifest.total_units} #{@manifest.unit_type} units total#{finalized}; " \
+          "examples: #{@manifest.total_examples} selected"
       end
 
       def print_log_notes(out)
@@ -238,6 +239,7 @@ module RSpec
           "exit_code" => outcome.exit_code,
           "message" => outcome.headline,
           "total_units" => @manifest&.total_units,
+          "unit_type" => @manifest&.unit_type,
           "total_examples" => @manifest&.total_examples,
           "finalized_count" => @finalized_count,
           **log_summary,

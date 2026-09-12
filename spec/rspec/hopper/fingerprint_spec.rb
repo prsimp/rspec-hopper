@@ -3,7 +3,8 @@
 RSpec.describe RSpec::Hopper::Fingerprint do
   let(:inputs) do
     { "file_args" => ["spec"], "filter" => { "inclusions" => [], "exclusions" => [] }, "pattern" => "**/*_spec.rb",
-      "exclude_pattern" => "", "order" => "defined", "example_ids" => ["./spec/a_spec.rb[1:1]"], "revision" => nil }
+      "exclude_pattern" => "", "order" => "defined", "example_ids" => ["./spec/a_spec.rb[1:1]"], "revision" => nil,
+      "unit_type" => "file" }
   end
 
   describe ".ordering_name" do
@@ -100,6 +101,13 @@ RSpec.describe RSpec::Hopper::Fingerprint do
       message = described_class::Mismatch.explain(local, remote.value, remote.digests)
       expect(message).to include("differing inputs: order")
       expect(message).not_to include("example_ids: this worker")
+    end
+
+    it "names the unit type when a file-unit worker meets an example-unit build" do
+      remote = described_class.new(inputs.merge("unit_type" => "example"))
+      message = described_class::Mismatch.explain(local, remote.value, remote.digests)
+      expect(message).to include("differing inputs: unit_type")
+      expect(message).to include("unit_type=file")
     end
 
     it "reports identical inputs as a gem-version difference" do

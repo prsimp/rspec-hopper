@@ -49,11 +49,14 @@ module HopperSpec
       end
 
       # Sends a signal to the process (or, with group: true, to its whole
-      # process group: the supervisor and its forked children).
+      # process group: the supervisor and its forked children). EPERM is
+      # treated like ESRCH: the pid or group is no longer ours to signal, and
+      # raising here from the shared cleanup hook would fail every later
+      # example in the run.
       def kill(sig, group: false)
         Process.kill(sig, group ? -pid : pid)
         true
-      rescue Errno::ESRCH
+      rescue Errno::ESRCH, Errno::EPERM
         false
       end
 

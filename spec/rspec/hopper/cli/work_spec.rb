@@ -16,7 +16,7 @@ RSpec.describe RSpec::Hopper::CLI::Work do
       expect(config.to_h).to include(
         build_id: "b1", worker_id: "w1", redis_url: "redis://127.0.0.1:6399/1",
         timeout: 180, max_unit_duration: 900, max_requeues: 0, requeue_tolerance: 0.0, max_reclaims: 3,
-        processes: 1, boot: :per_process, report_on_exit: false,
+        processes: 1, boot: :per_process, report_on_exit: false, unit_type: "file",
         ttl: 14_400, tombstone_ttl: 604_800, init_timeout: 300, revision: nil,
         rspec_args: [], supervised: false
       )
@@ -27,9 +27,11 @@ RSpec.describe RSpec::Hopper::CLI::Work do
       config = parse(*required, "--timeout", "2.5", "--max-unit-duration", "30", "--max-requeues", "5",
                      "--requeue-tolerance", "0.25", "--max-reclaims", "1", "--processes", "3", "--boot", "shared",
                      "--report-on-exit", "--ttl", "60", "--tombstone-ttl", "120", "--init-timeout", "9",
-                     "--revision", "abc123")
+                     "--revision", "abc123",
+                     "--unit", "example")
       expect(config.to_h).to include(
-        timeout: 2.5, max_unit_duration: 30, max_requeues: 5, requeue_tolerance: 0.25, max_reclaims: 1,
+        unit_type: "example", timeout: 2.5, max_unit_duration: 30, max_requeues: 5, requeue_tolerance: 0.25,
+        max_reclaims: 1,
         processes: 3, boot: :shared, report_on_exit: true, ttl: 60, tombstone_ttl: 120, init_timeout: 9,
         revision: "abc123"
       )
@@ -109,6 +111,7 @@ RSpec.describe RSpec::Hopper::CLI::Work do
         %w[--requeue-tolerance 1.5] => /--requeue-tolerance must be between 0 and 1/,
         %w[--requeue-tolerance -0.1] => /--requeue-tolerance must be between 0 and 1/,
         %w[--boot sideways] => /invalid argument: --boot sideways/,
+        %w[--unit group] => /invalid argument: --unit group/,
         %w[--timeout 0] => /--timeout must be positive/,
         %w[--max-unit-duration -1] => /--max-unit-duration must be positive/,
         %w[--ttl 0] => /--ttl must be positive/,

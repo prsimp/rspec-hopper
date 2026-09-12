@@ -65,7 +65,7 @@ RSpec.describe "rspec-hopper report timing", :integration, :redis do
       worker = spawn_worker(fixture: "all-pass", worker_id: "w1")
       report.wait(timeout: 30)
       expect(report.exit_code).to eq(0), report.stdout
-      expect(report.stdout).to include("units: 3 total, 3 finalized; examples: 7 selected")
+      expect(report.stdout).to include("units: 3 file units total, 3 finalized; examples: 7 selected")
       expect(summary).to include("verdict" => "passed", "total_units" => 3, "total_examples" => 7,
                                  "finalized_count" => 3, "state" => "ready")
 

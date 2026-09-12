@@ -7,7 +7,8 @@ module RSpec
   module Hopper
     class Worker
       # Loads the RSpec suite once per process, rejects unsupported options,
-      # discovers file units, computes the fingerprint and adopts the build seed.
+      # discovers the units (`config.unit_type`), computes the fingerprint and
+      # adopts the build seed.
       # This is the only place that mutates RSpec.configuration.
       class Suite
         RUNNER_OPTIONS = {
@@ -48,6 +49,7 @@ module RSpec
           @err = err
           @load_errors = []
           @groups_by_file = {}
+          @unit_examples = {}
         end
 
         def configuration = RSpec.configuration
@@ -85,12 +87,38 @@ module RSpec
         end
 
         def unit_ids = units.map(&:id)
+        def unit_type = config.unit_type
+        def example_units? = config.example_units?
 
-        # Top-level groups whose file is the unit, in configured order.
-        def groups_for(unit_id) = @groups_by_file.fetch(unit_id, [])
+        # The top-level groups a unit runs through: every group of the file for
+        # a file unit, the one group containing the example for an example unit.
+        def groups_for(unit_id)
+          return @groups_by_file.fetch(unit_id, []) unless example_units?
 
-        # Selected examples of the unit, including nested groups.
-        def examples_for(unit_id) = groups_for(unit_id).flat_map(&:descendant_filtered_examples)
+          group, _example = @unit_examples[unit_id]
+          group ? [group] : []
+        end
+
+        # Selected examples of the unit: the file's, including nested groups,
+        # or the one example.
+        def examples_for(unit_id)
+          return groups_for(unit_id).flat_map(&:descendant_filtered_examples) unless example_units?
+
+          _group, example = @unit_examples[unit_id]
+          example ? [example] : []
+        end
+
+        # Executes one unit through `ExampleGroup.run`, after resetting its
+        # examples so a retry in this process starts clean. An example unit
+        # narrows its group to the one example for the duration of the run.
+        def run_unit(unit_id, reporter)
+          groups = groups_for(unit_id)
+          examples = examples_for(unit_id)
+          ExampleReset.reset_examples(examples)
+          return groups.each { |group| group.run(reporter) } unless example_units?
+
+          ExampleSubset.scoped(groups.first, examples) { groups.first.run(reporter) }
+        end
 
         # Sets the build seed without changing the global ordering strategy:
         # `Configuration#seed=` switches an unforced global ordering to random,
@@ -122,6 +150,7 @@ module RSpec
         def to_manifest(revision: config.revision)
           Manifest.new(
             total_examples: total_examples, file_counts: file_counts, file_args: file_args,
+            unit_type: unit_type, unit_ids: unit_ids,
             fingerprint: fingerprint.value, fingerprint_digests: fingerprint.digests,
             seed: configuration.seed, revision: revision, load_errors: load_errors
           )
@@ -137,7 +166,8 @@ module RSpec
           world.announce_filters
           discover_units
           @fingerprint = Fingerprint.compute(configuration: configuration, options: options, example_ids: example_ids,
-                                             file_args: file_args, revision: config.revision)
+                                             file_args: file_args, revision: config.revision,
+                                             unit_type: config.unit_type)
         end
 
         # The per-example patches such gems install still work — that is what
@@ -232,9 +262,32 @@ module RSpec
             end
           end
                                         .freeze
-          @units = @file_counts.keys.map { |path| Unit.file(path) }.freeze
           @total_examples = @file_counts.values.sum
           @example_ids = @groups_by_file.values.flatten.flat_map(&:descendant_filtered_examples).map(&:id).sort.freeze
+          @units = (example_units? ? example_units : file_units).freeze
+        end
+
+        def file_units = @file_counts.keys.map { |path| Unit.file(path) }
+
+        # One unit per selected example, in the order RSpec would run them under
+        # this worker's configuration and seed (top-level groups as the world
+        # orders them, which interleaves files under random ordering), so the
+        # queue order is the ordering the initializer publishes with the seed.
+        def example_units
+          world.ordered_example_groups.each do |group|
+            next if group.descendant_filtered_examples.empty?
+
+            ordered_examples(group).each { |example| @unit_examples[example.id] = [group, example] }
+          end
+          @unit_examples.keys.map { |id| Unit.example(id) }
+        end
+
+        # A group's selected examples then its children's, each in the group's
+        # own ordering: the sequence `ExampleGroup.run` would execute.
+        def ordered_examples(group)
+          strategy = group.ordering_strategy
+          strategy.order(group.filtered_examples) +
+            strategy.order(group.children).flat_map { |child| ordered_examples(child) }
         end
       end
     end

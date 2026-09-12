@@ -209,6 +209,57 @@ RSpec.describe RSpec::Hopper::Worker do
       expect(out.string).to include("5 examples, 0 failures")
     end
 
+    context "with example units" do
+      let(:config) { work_config(max_requeues: 2, requeue_tolerance: 1.0, unit_type: "example") }
+      let(:flaky) { "./spec/flaky_spec.rb[1:1]" }
+
+      it "publishes one unit per example and retries only the flaky example" do
+        files = passing_files.merge("spec/flaky_spec.rb" => HopperSpec::RSpecSandbox.flaky_spec)
+        result = run_worker(files, args: ["--order", "defined"])
+        expect(result.code).to eq(0)
+        manifest = queue.manifest
+        expect(manifest.unit_type).to eq("example")
+        expect(manifest.unit_ids).to eq(%w[./spec/a_spec.rb[1:1] ./spec/a_spec.rb[1:2] ./spec/b_spec.rb[1:1]
+                                           ./spec/flaky_spec.rb[1:1] ./spec/flaky_spec.rb[1:2]])
+        expect(out.string).to include("initialized build build-1 (5 units, 5 examples)")
+        expect(queue.events_of("requeued").map { |e| e.slice("unit_id", "retry_index", "failure_summary") })
+          .to eq([{ "unit_id" => flaky, "retry_index" => 1, "failure_summary" => "1 failure" }])
+        expect(finalized(flaky)).to contain_exactly(include("outcome" => "passed", "retry_index" => 1))
+        expect(finalized("./spec/flaky_spec.rb[1:2]")).to contain_exactly(include("outcome" => "passed",
+                                                                                  "retry_index" => 0))
+        expect(out.string).to include("[hopper w1] Retrying #{flaky} (retry 1 of 2; next attempt 2): 1 failure")
+        expect(result.spy.times_seen(flaky)).to eq(1)
+        expect(result.spy.count(:example_started)).to eq(5)
+        expect(result.spy.count(:example_failed)).to eq(0)
+        expect(out.string).to include("5 examples, 0 failures")
+      end
+
+      it "runs a file's context hooks around every example unit" do
+        runs = 0
+        HopperSpec::FixtureHooks.on(:context_hook) { runs += 1 }
+        files = { "spec/ctx_spec.rb" => <<~RUBY }
+          RSpec.describe "ctx" do
+            before(:context) do
+              HopperSpec::FixtureHooks.fire(:context_hook)
+              @shared = 42
+            end
+            it("one") { expect(@shared).to eq(42) }
+            it("two") { expect(@shared).to eq(42) }
+            context "nested" do
+              it("three") { expect(@shared).to eq(42) }
+            end
+          end
+        RUBY
+        result = run_worker(files, args: ["--order", "defined"])
+        expect(result.code).to eq(0)
+        expect(runs).to eq(3)
+        expect(queue.events_of("finalized").map { |e| e.values_at("unit_id", "outcome") })
+          .to eq([["./spec/ctx_spec.rb[1:1]", "passed"], ["./spec/ctx_spec.rb[1:2]", "passed"],
+                  ["./spec/ctx_spec.rb[1:3:1]", "passed"]])
+        expect(result.spy.count(:example_passed)).to eq(3)
+      end
+    end
+
     it "finalizes a retry-budget-exhausted attempt as failed and replays it" do
       zero = HopperSpec::FakeQueue.new(max_requeues: 0, clock: clock)
       files = { "spec/flaky_spec.rb" => HopperSpec::RSpecSandbox.flaky_spec }
