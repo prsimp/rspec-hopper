@@ -7,17 +7,25 @@ commands:
   bundle_install:
     steps:
       - checkout
+      # Keyed on the Ruby the job is actually running, not the job name: the
+      # three 4.0.6 jobs need identical gems and share one cache, while a
+      # bundle built for 3.2 is never handed to 3.4. `ruby -v` rather than the
+      # job's parameter, so a cimg image bumping the patch level rebuilds the
+      # native extensions instead of restoring ones built against the old ABI.
+      - run:
+          name: Record the Ruby version for the cache key
+          command: ruby -v | tee .ruby-version-lock
       - restore_cache:
           keys:
-            - gems-v1-{{ .Environment.CIRCLE_JOB }}-{{ checksum "rspec-hopper.gemspec" }}-{{ checksum "Gemfile" }}
-            - gems-v1-{{ .Environment.CIRCLE_JOB }}-
+            - gems-v2-{{ checksum ".ruby-version-lock" }}-{{ checksum "rspec-hopper.gemspec" }}-{{ checksum "Gemfile" }}
+            - gems-v2-{{ checksum ".ruby-version-lock" }}-
       - run:
           name: Install dependencies
           command: |
             bundle config set --local path vendor/bundle
             bundle install --jobs 4 --retry 3
       - save_cache:
-          key: gems-v1-{{ .Environment.CIRCLE_JOB }}-{{ checksum "rspec-hopper.gemspec" }}-{{ checksum "Gemfile" }}
+          key: gems-v2-{{ checksum ".ruby-version-lock" }}-{{ checksum "rspec-hopper.gemspec" }}-{{ checksum "Gemfile" }}
           paths:
             - vendor/bundle
 

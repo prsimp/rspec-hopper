@@ -13,6 +13,7 @@ tmp/
 /Gemfile.lock
 
 /test-results/
+/.ruby-version-lock
 
 # rspec failure tracking
 .rspec_status
