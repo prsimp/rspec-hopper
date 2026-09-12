@@ -1,0 +1,8 @@
+# One SQLite file per worker process, following the parallel_tests convention:
+# TEST_ENV_NUMBER is "" for the first process and "2".."N" after that. Under
+# `--boot shared` this file is re-read in every child, see spec/support/hopper.rb.
+test:
+  adapter: sqlite3
+  database: db/test<%= ENV["TEST_ENV_NUMBER"] %>.sqlite3
+  pool: 5
+  timeout: 5000

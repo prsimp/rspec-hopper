@@ -85,10 +85,49 @@ jobs:
           path: test-results
           destination: test-results
 
+# The Rails example under examples/rails-app has its own bundle (Rails,
+# SQLite, rspec-rails) so the gem's dependencies stay at rspec-core, redis
+# and json. Its integration spec is skipped in the spec jobs above, where
+# that bundle is absent, and runs here on the newest Ruby only.
+rails-example:
+  docker:
+    - image: cimg/ruby:4.0.6
+      environment:
+        HOPPER_TEST_REDIS_URL: redis://127.0.0.1:6379/0
+    - image: redis:7-alpine
+  steps:
+    - bundle_install
+    - restore_cache:
+        keys:
+          - rails-example-v1-{{ checksum ".ruby-version-lock" }}-{{ checksum "examples/rails-app/Gemfile.lock" }}
+    - run:
+        name: Install the example app's bundle
+        working_directory: examples/rails-app
+        command: |
+          bundle config set --local path vendor/bundle
+          bundle install --jobs 4 --retry 3
+    - save_cache:
+        key: rails-example-v1-{{ checksum ".ruby-version-lock" }}-{{ checksum "examples/rails-app/Gemfile.lock" }}
+        paths:
+          - examples/rails-app/vendor/bundle
+    - wait_for_redis
+    - run:
+        name: Run the Rails example integration spec
+        command: |
+          bundle exec rspec spec/integration/rails_example_spec.rb \
+            --format documentation \
+            --format RspecJunitFormatter --out test-results/rspec/results.xml
+    - store_test_results:
+        path: test-results
+    - store_artifacts:
+        path: test-results
+        destination: test-results
+
 workflows:
   ci:
     jobs:
       - rubocop
+      - rails-example
       - spec:
           name: ruby-3.2-redis-7
           ruby: "3.2"
