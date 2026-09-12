@@ -202,7 +202,11 @@ RSpec.describe RSpec::Hopper::Queue::RedisStreams, :redis do
       retried = queue.reserve("w2")
       expect(retried).to have_attributes(unit_id: first.unit_id, stream: "units:priority", retry_index: 1,
                                          reclaim_count: 0, delivery_count: 1)
-      expect(retried.entry_id).not_to eq(first.entry_id)
+      # A reservation is the pair (stream, entry_id): ids are unique only within
+      # a stream, so the new priority entry can carry the id the units entry had
+      # when both XADDs land in the same millisecond.
+      expect([retried.stream, retried.entry_id]).not_to eq([first.stream, first.entry_id])
+      expect(pending_row(first)).to be_nil
       expect(queue.reserve("w2").unit_id).to eq(unit_ids[1])
     end
 
