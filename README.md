@@ -7,10 +7,10 @@ rspec-hopper distributes an RSpec suite across many CI workers through a shared
 Redis, requeues flaky work, reclaims work from workers that die, and produces one
 authoritative pass/fail verdict for the whole build.
 
-A hopper feeds a machine continuously: workers pull spec files from a shared queue as
-fast as they finish them, and requeued files drop back in ahead of untouched work.
-There is no up-front partitioning, so a slow file or a slow machine only delays its
-own share of the work.
+A hopper feeds a machine continuously: workers pull spec files (or, with
+`--unit example`, single examples) from a shared queue as fast as they finish them,
+and requeued work drops back in ahead of untouched work. There is no up-front
+partitioning, so a slow file or a slow machine only delays its own share of the work.
 
 ## Problems it solves
 
@@ -75,8 +75,13 @@ bundle exec rspec-hopper report \
 ```
 
 The report's exit code is the build's result. Use it as the CI job's status. The
-`--failed-out` file holds one spec file per line (failed and never-finalized units), so
-`bundle exec rspec $(cat tmp/hopper-failed.txt)` reruns them locally.
+`--failed-out` file holds one unit id per line (failed and never-finalized units): a
+spec file, or under `--unit example` an example id such as `./spec/foo_spec.rb[1:2]`.
+Either form is an argument `rspec` accepts, so this reruns them locally:
+
+```sh
+xargs bundle exec rspec < tmp/hopper-failed.txt
+```
 
 `--build`, `--worker` and `--redis` can be omitted when `HOPPER_BUILD_ID`,
 `HOPPER_WORKER_ID` and `HOPPER_REDIS_URL` (or `REDIS_URL`) are set, and the build and
@@ -89,13 +94,15 @@ worker, `<hostname>-<pid>` is used.
 1. Every worker boots the application and loads the spec files with RSpec, exactly as
    `rspec` would, applying `.rspec`, `~/.rspec`, `SPEC_OPTS` and the command line.
 2. The first worker to take a short lease publishes the build: one **unit** per spec
-   file that has at least one selected example, plus a manifest (unit and example
+   file that has at least one selected example (or per selected example, see
+   [Work units](#work-units-files-or-examples)), plus a manifest (unit and example
    counts, the file arguments, the suite fingerprint, the seed). Every other worker
    waits for the manifest, then checks that its own suite fingerprint matches. A
    worker that does not match exits 2 and names the inputs that differ.
 3. Workers loop: reclaim a unit whose owner stopped heartbeating, or reserve the next
-   unit (requeued units first), run all of that file's top-level example groups through
-   `ExampleGroup.run`, then finalize the unit as passed or failed, or requeue it.
+   unit (requeued units first), run it through `ExampleGroup.run` (all of a file's
+   top-level groups, or one example narrowed within its group), then finalize the unit
+   as passed or failed, or requeue it.
 4. Formatter output is buffered per attempt and replayed only for the final attempt,
    so JUnit and JSON files contain each example exactly once. Flakiness is recorded in
    the attempt log, not in formatter output.
@@ -128,6 +135,37 @@ These hold regardless of worker crashes, hung tests, or Redis trouble:
 - Requeued work is preferred over untouched work.
 - Redis, application or worker death and hung tests may delay completion; they cannot
   silently change the verdict or prevent completion indefinitely.
+
+## Work units: files or examples
+
+`--unit file` (the default) makes each spec file one unit. `--unit example` makes
+each selected example one unit, identified by its RSpec id
+(`./spec/models/foo_spec.rb[1:2:1]`). The choice belongs to the build: the unit type
+is part of the suite fingerprint, so a worker started with the other value exits 2
+naming `unit_type` as the differing input.
+
+Example units buy two things. Scheduling is finer, so one slow file no longer holds
+a worker while the others sit idle, and a requeue reruns only the example that
+failed rather than its whole file. What they cost:
+
+- **Context hooks run per example.** An example unit runs through its file's group
+  with the selection narrowed to that one example, so `before(:context)` and
+  `after(:context)` hooks on the path to the example fire once per unit, not once
+  per file. Sibling contexts that contain no selected example are skipped entirely.
+  A file whose `before(:all)` is expensive is a reason to stay with file units.
+- **Documentation-style formatters repeat group headers.** Each unit replays its own
+  `example_group_started` notifications, so the documentation formatter prints the
+  group description before every example. JUnit and JSON output are unaffected:
+  every example still appears exactly once.
+- **The manifest is larger.** It lists every unit id, about 40 bytes per example,
+  and the queue holds one entry per example. Redis handles tens of thousands of
+  entries comfortably; a suite of several hundred thousand examples should measure
+  before switching.
+
+Ordering is preserved. The publishing worker queues the examples in the order RSpec
+would have run them under the build seed, so `--order rand` still randomizes the
+sequence and `--seed` still reproduces it. Reclaims and requeues of individual
+examples do not change the order of the remaining queue.
 
 ## Suite hooks run once per worker process
 
@@ -211,8 +249,9 @@ rspec-hopper work --build ID --worker WID --redis URL [options] [rspec args...] 
 | `--worker WID` | `$HOPPER_WORKER_ID`, CI inference, then `<hostname>-<pid>` | This worker's id, unique within the build. |
 | `--redis URL` | `$HOPPER_REDIS_URL`, then `$REDIS_URL` | Redis URL. |
 | `--revision SHA` | none | String mixed into the suite fingerprint, for example the commit being tested. |
+| `--unit TYPE` | `file` | What one queue entry is: `file` or `example`. See [Work units](#work-units-files-or-examples). |
 | `--timeout SECONDS` | 180 | Missed-heartbeat window after which an in-flight unit can be reclaimed by another worker. |
-| `--max-unit-duration SECONDS` | 900 | After this much execution time a unit is recorded as abandoned and becomes reclaimable even though its owner is alive; the owner aborts itself `--timeout` seconds later. Must exceed the slowest legitimate file. |
+| `--max-unit-duration SECONDS` | 900 | After this much execution time a unit is recorded as abandoned and becomes reclaimable even though its owner is alive; the owner aborts itself `--timeout` seconds later. Must exceed the slowest legitimate unit. |
 | `--max-requeues N` | 0 | Maximum number of retries of any one unit. |
 | `--requeue-tolerance R` | 0 | Fraction of units, `0.0` to `1.0`, allowed to enter retry during the build (`ceil(total_units * R)` units). |
 | `--max-reclaims N` | 3 | Reclaims from dead or abandoning owners before a unit is finalized as failed. |
@@ -227,9 +266,9 @@ Either retry limit at zero disables requeues; the defaults run every file once. 
 retry, reclaim and timeout values of the worker that publishes the build are recorded
 in the build and enforced for every worker, so give all workers the same flags.
 
-Requeue eligibility: a failed attempt is requeued only if every failure in the file is
+Requeue eligibility: a failed attempt is requeued only if every failure in the unit is
 requeueable, meaning anything except `SystemExit`, `Interrupt`, `SignalException` and
-`NoMemoryError`. One of those anywhere in the file makes the attempt final. When a
+`NoMemoryError`. One of those anywhere in the unit makes the attempt final. When a
 retry would exceed `--max-requeues` or the tolerance, the failure is final with reason
 `retry_budget_exhausted`. On a requeue the worker prints one line and emits nothing to
 formatters:
@@ -245,7 +284,8 @@ wherever they come from (`.rspec`, `~/.rspec`, `SPEC_OPTS` or the command line):
 state or with distributed execution.
 
 The seed is chosen by the publishing worker (the user's `--seed` if given, otherwise
-random) and adopted by every worker, so within-file ordering is identical everywhere.
+random) and adopted by every worker, so within-file ordering is identical everywhere,
+and under `--unit example` the queue itself is in that order.
 
 ### `rspec-hopper report`
 
@@ -261,7 +301,7 @@ rspec-hopper report --build ID --redis URL [options]
 | `--init-timeout S` | 300 | Wait this long for the manifest or tombstone to appear before exiting 2. |
 | `--inactive-timeout S` | 300 | Give up (exit 3) once this long has passed since the later of the build becoming ready and the most recent worker activity. |
 | `--summary-out PATH` | none | Write the JSON summary to PATH. |
-| `--failed-out PATH` | none | Write failed and never-finalized unit ids to PATH, one per line. |
+| `--failed-out PATH` | none | Write failed and never-finalized unit ids to PATH, one per line (file paths or example ids, depending on the build's `--unit`). |
 | `--fail-on-empty` | on | Zero selected examples is a failure. |
 | `--allow-empty` | off | Zero selected examples may pass. Cannot be combined with a positive `--min-examples`. |
 | `--min-examples N` | 0 | Fail unless at least N examples were selected, guarding against a filter that selects almost nothing. |
@@ -273,7 +313,7 @@ count as worker activity, so a file slower than `--inactive-timeout` does not tr
 
 The JSON summary has these keys: `build_id`, `state`, `verdict` (`passed`, `failed`,
 `incomplete`, `init_failed`, `missing`, `expired`, `unreachable`), `exit_code`,
-`message`, `total_units`, `total_examples`, `finalized_count`, `failed` (unit id,
+`message`, `total_units`, `unit_type`, `total_examples`, `finalized_count`, `failed` (unit id,
 reason, worker id, errors), `flaky`, `never_finalized` (unit id, last worker id),
 `abandoned`, `retry_counts`, `reclaim_counts`, `worker_errors`, `stale_rejections`,
 `workers`, `load_errors`, `file_args`, `seed`, `fingerprint`, `revision`.
@@ -601,10 +641,10 @@ tree or a version that is already tagged.
 
 [trusted publishing]: https://guides.rubygems.org/trusted-publishing/
 
-## Phase 1 non-goals
+## Non-goals
 
-- Example-level units or splitting slow files; a unit is a whole spec file.
-- Retrying only the failed examples within a file; a requeue reruns the file.
+- Splitting a file into anything other than whole examples; there is no partial retry
+  of a file unit, a requeue reruns the whole unit.
 - Timing-based ordering or scheduling.
 - Metrics emission.
 - Compatibility with ci-queue's flags.

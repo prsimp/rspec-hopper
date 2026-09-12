@@ -23,6 +23,7 @@ lib/rspec/hopper/attempt_log.rb            Event + queries
 lib/rspec/hopper/manifest.rb
 lib/rspec/hopper/fingerprint.rb
 lib/rspec/hopper/example_reset.rb
+lib/rspec/hopper/example_subset.rb          narrows a group to one example around ExampleGroup.run
 lib/rspec/hopper/worker.rb                 the RSpec adapter: loop, init/election, completion
 lib/rspec/hopper/worker/suite.rb           loads RSpec, discovers units, option checks, seed adoption
 lib/rspec/hopper/worker/buffering_reporter.rb
@@ -39,7 +40,7 @@ exe/rspec-hopper
 spec/spec_helper.rb                        loads spec/support/**/*.rb
 spec/support/redis_helper.rb               TEST redis url, flush helper, key/TTL scan
 spec/rspec/hopper/**                       unit specs, mirror lib layout
-spec/contract/**                           example_reset, prepend coexistence
+spec/contract/**                           example_reset, example_subset, prepend coexistence
 spec/fixtures/suites/<name>/               fixture suites (each has .rspec, spec/, optional spec_helper)
 spec/integration/**                        spawn real `exe/rspec-hopper work` processes
 ```
@@ -237,10 +238,13 @@ A unit reclaimed and then passing with no `requeued` event is not flaky.
 
 ## Manifest
 
-`Manifest = Data.define(:total_units, :total_examples, :file_counts, :file_args,
-:fingerprint, :fingerprint_digests, :seed, :ready_at, :revision, :load_errors)` —
-`#unit_ids` is derived: the
-keys of `file_counts` in order (`total_units == unit_ids.size`).
+`Manifest = Data.define(:total_units, :total_examples, :unit_type, :unit_ids, :file_counts,
+:file_args, :fingerprint, :fingerprint_digests, :seed, :ready_at, :revision, :load_errors)` —
+`unit_type` is `file` or `example`. For file units `unit_ids` defaults to the keys of
+`file_counts` in order and is not written to `meta`; for example units it is given
+explicitly (the example ids in queue order) and written as the JSON field `unit_ids`.
+`total_units == unit_ids.size` always; `file_counts` (selected examples per file) is
+kept for both types.
 `#to_meta` -> Hash of String->String for HSET (JSON-encoding the nested fields);
 `Manifest.from_meta(hash)` inverse (ignores the extra runtime fields). `ready_at` is
 epoch ms set by Redis; before publication it's nil.
@@ -261,19 +265,26 @@ children). Sequence:
    `configuration.load_spec_files`; `RSpec.world.wants_to_quit || rspec_is_quitting`
    with captured messages => `load_errors`. Any other exception during boot is phase
    `boot` -> exit 2.
-2. Units: `RSpec.world.ordered_example_groups` (top-level, in configured order); a unit
-   is every distinct `group.metadata[:file_path]` whose `descendant_filtered_examples`
+2. Units: `RSpec.world.ordered_example_groups` (top-level, in configured order); a file
+   unit is every distinct `group.metadata[:file_path]` whose `descendant_filtered_examples`
    is non-empty; file counts are `descendant_filtered_examples.size` summed per file;
-   unit id is `metadata[:file_path]` verbatim (`./spec/...`). Example ids for the
+   unit id is `metadata[:file_path]` verbatim (`./spec/...`). With
+   `config.unit_type == "example"` a unit is every selected example, id `example.id`
+   (`./spec/foo_spec.rb[1:2:1]`), in the order `ExampleGroup.run` would execute them:
+   per top-level group, `ordering_strategy.order(filtered_examples)` then
+   `ordering_strategy.order(children)` recursively, under this worker's seed (which is
+   the seed the initializer publishes). Example ids for the
    fingerprint are `example.id` over `RSpec.world.all_examples` filtered to the selected
    set (`group.descendant_filtered_examples` across all top-level groups).
-3. Fingerprint (`Fingerprint.compute(configuration:, options:, revision:)`): SHA256 over
-   a canonical JSON of `{file_args: sorted, filter: inclusion+exclusion rules as
+3. Fingerprint (`Fingerprint.compute(configuration:, options:, revision:, unit_type:)`):
+   SHA256 over a canonical JSON of `{file_args: sorted, filter: inclusion+exclusion rules as
    strings, pattern:, exclude_pattern:, order: configuration.ordering_registry ... name
    (`RSpec.configuration.ordering_manager` exposes `seed_used?`/`order`; derive the
    strategy name from `configuration.ordering_manager.instance_variable_get`? NO —
    use the merged option `options.options[:order]` string minus any `:seed` suffix, or
-   `"defined"` when absent), example_ids: sorted, revision:}`. Also returns the
+   `"defined"` when absent), example_ids: sorted, revision:, unit_type:}`. Including the
+   unit type is what stops a `--unit file` worker joining a `--unit example` build; the
+   mismatch message names `unit_type`. Also returns the
    `inputs` hash so a mismatch message can diff them (`Fingerprint::Mismatch#explain`).
 4. Election/join per product spec; `config.init_timeout` bounds it. After `ready`:
    compare fingerprint; `RSpec.configuration.seed = manifest.seed`.
@@ -288,9 +299,11 @@ children). Sequence:
    supervised, continue. With a reservation: `ExampleReset.reset(groups)` if
    `reservation.ownership_generation > 1` OR the process has run these groups before
    (simplest: always reset before running; the reset is idempotent on fresh examples —
-   do it always), start `Heartbeat`, run each top-level group for the unit through
-   `group.run(buffering_reporter)` in `ordered_example_groups` order, stop heartbeat,
-   then `RequeuePolicy.decide(examples)`.
+   do it always), start `Heartbeat`, run the unit via `Suite#run_unit`: each top-level
+   group of a file unit through `group.run(buffering_reporter)` in
+   `ordered_example_groups` order, or for an example unit its one top-level group inside
+   `ExampleSubset.scoped(group, [example])`; stop heartbeat, then
+   `RequeuePolicy.decide(examples)`.
 7. `RequeuePolicy`: collect `execution_result` of the unit's selected examples; failed
    examples' `exception` (and for `RSpec::Core::MultipleExceptionError`, `all_exceptions`)
    must all be requeueable (`not SystemExit/Interrupt/SignalException/NoMemoryError`);
@@ -337,6 +350,18 @@ ivar list after a run under bare rspec-core 3.13.6:
 `[:@clock, :@example_block, :@example_group_class, :@example_group_instance,
 :@exception, :@id, :@metadata, :@reporter]`.
 
+`ExampleSubset.scoped(root, examples) { root.run(reporter) }` — the second sanctioned
+touch of rspec-core internals (Phase 2). `ExampleGroup.run` takes what to run from
+`RSpec.world.filtered_examples[group]` and decides whether to run a group's context
+hooks from the memoized `@descendant_filtered_examples`. For every group in
+`root.descendants` the module saves both, replaces the world entry with the
+intersection with `examples` and clears the memo, yields, and restores both in an
+`ensure`. Nothing else; no method resolution changes. The contract spec asserts the
+hook behaviour (only hooks on the path to the example fire, siblings are skipped),
+restoration after an exception, that `ExampleGroup.filtered_examples` is the very
+object in the world hash, and pins the class ivar list of a run group under bare
+rspec-core 3.13.6 (`ExampleSubset::EXPECTED_GROUP_IVARS`).
+
 ## Report
 
 `Report.new(config:, queue:, clock:, sleeper:)`, `#run(out:)` -> exit code; `#summary`
@@ -360,13 +385,14 @@ never_finalized).
 ## Config
 
 ```ruby
-WorkConfig = Data.define(:build_id, :worker_id, :redis_url, :timeout, :max_unit_duration,
+WorkConfig = Data.define(:build_id, :worker_id, :redis_url, :unit_type, :timeout, :max_unit_duration,
   :max_requeues, :requeue_tolerance, :max_reclaims, :processes, :boot, :report_on_exit,
   :ttl, :tombstone_ttl, :init_timeout, :revision, :rspec_args, :report_args, :supervised)
 ReportConfig = Data.define(:build_id, :redis_url, :timeout, :init_timeout,
   :inactive_timeout, :summary_out, :failed_out, :allow_empty, :min_examples)
 ```
-Defaults live in `Config::DEFAULTS`. `boot` is `:per_process` or `:shared`.
+Defaults live in `Config::DEFAULTS`. `boot` is `:per_process` or `:shared`; `unit_type`
+is `"file"` or `"example"` (`--unit`).
 `rspec_args` is the array after the gem's own flags (everything OptionParser did not
 consume, plus everything after `--`). `report_args` are the raw args for the parent's
 `--report-on-exit` report (built from the work flags: build, redis).
