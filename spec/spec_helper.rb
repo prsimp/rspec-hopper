@@ -1,15 +1,22 @@
 # frozen_string_literal: true
 
 require "rspec/hopper"
+require "securerandom"
+require "stringio"
+require "tmpdir"
+require "timeout"
+
+Dir[File.join(__dir__, "support", "**", "*.rb")].each { |f| require f }
 
 RSpec.configure do |config|
-  # Enable flags like --only-failures and --next-failure
-  config.example_status_persistence_file_path = ".rspec_status"
-
-  # Disable RSpec exposing methods globally on `Module` and `main`
   config.disable_monkey_patching!
+  config.order = :random
+  config.expect_with(:rspec) { |c| c.syntax = :expect }
+  config.filter_run_when_matching :focus
 
-  config.expect_with :rspec do |c|
-    c.syntax = :expect
+  config.before(:each, :redis) do
+    skip HopperSpec::RedisHelper.unavailable_message unless HopperSpec::RedisHelper.available?
   end
+
+  config.after { RSpec::Hopper.reset_hooks! }
 end

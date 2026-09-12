@@ -1,0 +1,25 @@
+# Redis for the gem's own test suite. Port 6399 keeps clear of a local 6379.
+#
+#   docker compose up -d redis           # Redis 7 (default)
+#   docker compose --profile valkey up -d valkey
+#   docker compose --profile redis62 up -d redis62   # XAUTOCLAIM 6.2 reply shape
+#
+# Point specs at a non-default server with HOPPER_TEST_REDIS_URL.
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6399:6379"
+  valkey:
+    image: valkey/valkey:8-alpine
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6399:6379"
+    profiles: ["valkey"]
+  redis62:
+    image: redis:6.2-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6399:6379"
+    profiles: ["redis62"]
