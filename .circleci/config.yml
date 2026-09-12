@@ -100,12 +100,28 @@ jobs:
       - restore_cache:
           keys:
             - rails-example-v1-{{ checksum ".ruby-version-lock" }}-{{ checksum "examples/rails-app/Gemfile.lock" }}
+      # Frozen: the app commits its lockfile, so a lock that no longer matches
+      # the Gemfile or lacks this platform fails here with Bundler's own
+      # message, rather than being rewritten and failing later inside a
+      # spawned worker's bundler/setup.
       - run:
           name: Install the example app's bundle
           working_directory: examples/rails-app
           command: |
             bundle config set --local path vendor/bundle
+            bundle config set --local frozen true
             bundle install --jobs 4 --retry 3
+      - run:
+          name: Show the Bundler environment the spawned workers inherit
+          command: |
+            env | grep -i bundle || true
+            echo "--- root .bundle/config"; cat .bundle/config || true
+            echo "--- app .bundle/config"; cat examples/rails-app/.bundle/config || true
+            echo "--- lockfile status"; git status --short examples/rails-app
+            echo "--- app boots on its own bundle"
+            (cd examples/rails-app && bundle exec ruby -e 'require "./config/environment"; puts "#{Rails.version} #{SQLite3::VERSION}"')
+            echo "--- same spawn shape as the integration spec"
+            bundle exec ruby -e 'ok = system({ "BUNDLE_GEMFILE" => File.expand_path("examples/rails-app/Gemfile"), "RUBYOPT" => nil }, Gem.ruby, "-rbundler/setup", "-e", "require %q(sqlite3); puts %q(spawned setup ok)"); puts "exit #{ok.inspect}"'
       - save_cache:
           key: rails-example-v1-{{ checksum ".ruby-version-lock" }}-{{ checksum "examples/rails-app/Gemfile.lock" }}
           paths:
