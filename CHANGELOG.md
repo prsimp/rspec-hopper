@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Point the gem's `documentation_uri` at the design document.
+
 ## [0.1.0] - 2026-09-11
 
 - Initial Phase 1 implementation: file-level work units distributed through
