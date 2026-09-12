@@ -63,15 +63,25 @@ module RSpec
           reject_unsupported_configuration!
           normalize_file_args!
           load_spec_files
-          world.announce_filters
-          discover_units
-          @fingerprint = Fingerprint.compute(configuration: configuration, options: options, example_ids: example_ids,
-                                             file_args: file_args, revision: config.revision)
+          describe_loaded_suite
           self
         rescue InfrastructureError
           raise
         rescue StandardError, ScriptError => e
           raise BootError, "#{e.class}: #{e.message}", e.backtrace
+        end
+
+        # Modules prepended onto `RSpec::Core::Runner` that define `run_specs`.
+        # A prepend on the superclass cannot intercept a method the subclass
+        # defines, and the worker's Runner defines `run_specs` itself, so these
+        # never run here.
+        #
+        # @param base [Class] the class to inspect; injectable for specs
+        def self.runner_wrappers(base = RSpec::Core::Runner)
+          base.ancestors
+              .take_while { |mod| !mod.equal?(base) }
+              .select { |mod| mod.method_defined?(:run_specs, false) }
+              .map { |mod| mod.name || mod.inspect }
         end
 
         def unit_ids = units.map(&:id)
@@ -118,6 +128,33 @@ module RSpec
         end
 
         private
+
+        # Everything that depends on the spec files being loaded: instrumentation
+        # is installed by then, and the units and fingerprint come from the
+        # groups the load produced.
+        def describe_loaded_suite
+          warn_about_runner_wrappers
+          world.announce_filters
+          discover_units
+          @fingerprint = Fingerprint.compute(configuration: configuration, options: options, example_ids: example_ids,
+                                             file_args: file_args, revision: config.revision)
+        end
+
+        # The per-example patches such gems install still work — that is what
+        # the no-prepend promise is about — so the failure is otherwise silent:
+        # spans keep being produced with no session for them to belong to, and
+        # the build looks instrumented while reporting nothing.
+        def warn_about_runner_wrappers
+          wrappers = self.class.runner_wrappers
+          return if wrappers.empty?
+
+          @err.puts "[hopper #{config.worker_id}] #{wrappers.join(", ")} wraps " \
+                    "RSpec::Core::Runner#run_specs, which rspec-hopper replaces, so that wrapper will not " \
+                    "run. Instrumentation that starts there (datadog-ci's test session and module, for " \
+                    "one) must be started from a before(:suite) hook and finished in after(:suite): hopper " \
+                    "runs those once per worker process. See the README."
+          @err.flush if @err.respond_to?(:flush)
+        end
 
         def reject_init_option!
           env_args = ENV["SPEC_OPTS"] ? Shellwords.split(ENV["SPEC_OPTS"]) : []

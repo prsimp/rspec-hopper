@@ -219,4 +219,48 @@ RSpec.describe RSpec::Hopper::Worker::Suite do
       end
     end
   end
+
+  describe ".runner_wrappers" do
+    let(:wrapped) do
+      mod = Module.new do
+        def run_specs(*) = super
+      end
+      Class.new { const_set(:Wrapper, mod) }.tap { |klass| klass.prepend(mod) }
+    end
+
+    it "names the modules prepended onto the class that define run_specs" do
+      expect(described_class.runner_wrappers(wrapped).size).to eq(1)
+    end
+
+    it "ignores a prepended module that leaves run_specs alone" do
+      klass = Class.new { prepend(Module.new { def setup(*) = super }) }
+      expect(described_class.runner_wrappers(klass)).to be_empty
+    end
+
+    it "finds nothing on a bare RSpec runner subclass, which is the point" do
+      expect(described_class.runner_wrappers(Class.new(RSpec::Core::Runner))).to be_empty
+    end
+  end
+
+  describe "instrumentation that wraps Runner#run_specs" do
+    it "warns that the wrapper will not run and names the before(:suite) route" do
+      allow(described_class).to receive(:runner_wrappers).and_return(["Datadog::CI::Contrib::RSpec::Runner::InstanceMethods"])
+      err = StringIO.new
+      with_project(files) { load_suite([], err: err) }
+
+      expect(err.string).to include("Datadog::CI::Contrib::RSpec::Runner::InstanceMethods wraps " \
+                                    "RSpec::Core::Runner#run_specs, which rspec-hopper replaces")
+      expect(err.string).to include("before(:suite)")
+    end
+
+    it "says nothing when no such instrumentation is loaded" do
+      # Stubbed rather than read from the live class: the datadog contract spec
+      # prepends onto RSpec::Core::Runner for the rest of the process, so what
+      # this process has loaded depends on file order.
+      allow(described_class).to receive(:runner_wrappers).and_return([])
+      err = StringIO.new
+      with_project(files) { load_suite([], err: err) }
+      expect(err.string).to be_empty
+    end
+  end
 end

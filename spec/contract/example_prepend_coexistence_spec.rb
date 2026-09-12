@@ -49,7 +49,6 @@ module HopperSpec
       settings.ci.enabled = true
       settings.ci.agentless_mode_enabled = true
       settings.ci.discard_traces = true
-      settings.ci.force_test_level_visibility = true
       settings.ci.git_metadata_upload_enabled = false
       settings.ci.itr_enabled = false
       settings.ci.retry_failed_tests_enabled = false
@@ -58,6 +57,9 @@ module HopperSpec
       settings.ci.impacted_tests_detection_enabled = false
       settings.ci.agentless_logs_submission_enabled = false
     end
+
+    # Where a sandboxed example records what datadog saw while it ran.
+    def probe = (@probe ||= [])
 
     def enabled=(value)
       Datadog.configuration.ci.enabled = value
@@ -120,5 +122,73 @@ RSpec.describe "Example prepend coexistence with datadog-ci" do
 
     expect(traced.size).to eq(6)
     expect(traced.count { |name| name.include?("passes on the second attempt") }).to eq(2)
+  end
+
+  describe "the test session lifecycle, which hangs off Runner#run_specs" do
+    let(:probe_spec) do
+      <<~RUBY
+        RSpec.describe "probe" do
+          it "records what datadog sees" do
+            HopperSpec::DatadogSetup.probe << {
+              session: !Datadog::CI.active_test_session.nil?,
+              module: !Datadog::CI.active_test_module.nil?,
+              test: !Datadog::CI.active_test.nil?
+            }
+            expect(1).to eq(1)
+          end
+        end
+      RUBY
+    end
+
+    let(:suite_hooks) do
+      <<~RUBY
+        RSpec.configure do |c|
+          c.before(:suite) do
+            Datadog::CI.start_test_session(service: "hopper-contract")
+            Datadog::CI.start_test_module("rspec")
+          end
+          c.after(:suite) do
+            Datadog::CI.active_test_module&.finish
+            Datadog::CI.active_test_session&.finish
+          end
+        end
+      RUBY
+    end
+
+    before { HopperSpec::DatadogSetup.probe.clear }
+
+    after do
+      Datadog::CI.active_test_module&.finish
+      Datadog::CI.active_test_session&.finish
+    end
+
+    def run_probe(project)
+      with_project(project) do
+        suite = load_suite([], config: config, out: out, err: err)
+        RSpec::Hopper::Worker.new(config: config, queue_factory: -> { queue }, suite: suite, out: out,
+                                  err: err).run
+      end
+    end
+
+    it "is prepended onto Runner but bypassed, since the worker's subclass defines run_specs" do
+      ancestors = RSpec::Core::Runner.ancestors
+      expect(ancestors.index(Datadog::CI::Contrib::RSpec::Runner::InstanceMethods))
+        .to be < ancestors.index(RSpec::Core::Runner)
+      expect(RSpec::Hopper::Worker::Suite.runner_wrappers)
+        .to include("Datadog::CI::Contrib::RSpec::Runner::InstanceMethods")
+
+      expect(run_probe("spec/probe_spec.rb" => probe_spec)).to eq(0)
+
+      # The per-example patch still runs; the session it should belong to does
+      # not exist, which is how spans end up orphaned and dropped.
+      expect(HopperSpec::DatadogSetup.probe).to eq([{ session: false, module: false, test: true }])
+      expect(err.string).to include("wraps RSpec::Core::Runner#run_specs, which rspec-hopper replaces")
+    end
+
+    it "is restored by starting it in before(:suite), which runs once per worker process" do
+      expect(run_probe("spec/probe_spec.rb" => probe_spec, "spec/support_spec.rb" => suite_hooks)).to eq(0)
+
+      expect(HopperSpec::DatadogSetup.probe).to eq([{ session: true, module: true, test: true }])
+    end
   end
 end

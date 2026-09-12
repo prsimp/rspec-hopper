@@ -24,8 +24,10 @@ exit with its own status" approach as it exists in other tools:
   run". The report tells them apart and only passes when a published manifest exists
   and every unit in it finalized as passed.
 - **Fighting other gems over RSpec internals.** Nothing is prepended onto
-  `RSpec::Core::Example#run`, `#start` or `#finish`, so instrumentation gems that do
-  (datadog-ci, rspec-retry and others) keep working.
+  `RSpec::Core::Example#run`, `#start` or `#finish`, so the per-example half of
+  instrumentation gems (datadog-ci, rspec-retry and others) keeps working. Anything
+  those gems wrap around `RSpec::Core::Runner#run_specs` is a different matter — see
+  [Instrumentation that wraps the runner](#instrumentation-that-wraps-the-runner).
 - **Ambiguous exit codes.** Workers exit 0 on completion regardless of test results;
   `rspec-hopper report` is the single place a build's verdict comes from.
 - **`Marshal.load` from a shared Redis.** Everything stored is JSON.
@@ -136,6 +138,45 @@ hook; if something must happen exactly once per build, do it in a CI step before
 workers start.
 
 A `before(:suite)` hook that raises makes that worker exit 2 without running any unit.
+
+### Instrumentation that wraps the runner
+
+The no-prepend promise covers `RSpec::Core::Example`. It does not extend to
+`RSpec::Core::Runner#run_specs`: the worker runs a `Runner` subclass that defines
+`run_specs` itself, driving the queue instead of `world.ordered_example_groups`, and a
+module prepended onto the superclass cannot intercept a method the subclass defines. Any
+gem whose session or reporting lifecycle lives in a `run_specs` wrapper will not have
+that wrapper run.
+
+datadog-ci is the case to know about. Its per-example patches still produce test spans,
+but `start_test_session` and `start_test_module` live in its `run_specs` wrapper, so
+without them every span is emitted with no session or module to belong to and Datadog
+drops the lot — `Event with type test(name=rspec.test) is invalid: test_session_id is
+required`. A worker prints a warning at boot when it finds such a wrapper, because the
+alternative is a green build reporting nothing.
+
+Start and finish that lifecycle in suite hooks instead. They run once per worker
+process, which is the same granularity each `parallel_tests` process had:
+
+```ruby
+# spec/support/datadog.rb
+RSpec.configure do |config|
+  config.before(:suite) do
+    Datadog::CI.start_test_session(service: "my-suite")
+    Datadog::CI.start_test_module("rspec")
+  end
+
+  config.after(:suite) do
+    Datadog::CI.active_test_module&.finish
+    Datadog::CI.active_test_session&.finish
+  end
+end
+```
+
+Two things to keep in mind. Each worker process opens its own session, so a build of ten
+workers reports ten sessions — Datadog's own guidance for `parallel_tests`-style
+parallelism. And `force_test_level_visibility` must stay off: it disables the
+suite-level visibility these calls depend on, and they silently return `nil` with it on.
 
 ## CLI reference
 
