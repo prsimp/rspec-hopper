@@ -112,21 +112,9 @@ jobs:
             bundle config set --local frozen true
             bundle install --jobs 4 --retry 3
       - run:
-          name: Show the Bundler environment the spawned workers inherit
-          command: |
-            env | grep -i bundle || true
-            echo "--- root .bundle/config"; cat .bundle/config || true
-            echo "--- app .bundle/config"; cat examples/rails-app/.bundle/config || true
-            echo "--- lockfile status"; git status --short examples/rails-app
-            echo "--- app boots on its own bundle"
-            (cd examples/rails-app && bundle exec ruby -e 'require "./config/environment"; puts "#{Rails.version} #{SQLite3::VERSION}"')
-            echo "--- same spawn shape as the integration spec"
-            bundle exec ruby -e 'ok = system({ "BUNDLE_GEMFILE" => File.expand_path("examples/rails-app/Gemfile"), "RUBYOPT" => nil }, Gem.ruby, "-rbundler/setup", "-e", "require %q(sqlite3); puts %q(spawned setup ok)"); puts "exit #{ok.inspect}"'
-      - save_cache:
-          key: rails-example-v1-{{ checksum ".ruby-version-lock" }}-{{ checksum "examples/rails-app/Gemfile.lock" }}
-          paths:
-            - examples/rails-app/vendor/bundle
-      - wait_for_redis
+          name: Check the example app boots on its own bundle
+          working_directory: examples/rails-app
+          command: bundle exec ruby -e 'require "./config/environment"; puts "#{Rails.version} #{SQLite3::VERSION}"'
       - run:
           name: Run the Rails example integration spec
           command: |

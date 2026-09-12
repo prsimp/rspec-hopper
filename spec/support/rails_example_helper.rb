@@ -31,10 +31,15 @@ module HopperSpec
       "examples/rails-app bundle not installed (run `bundle install` in examples/rails-app)"
     end
 
-    # Spawns `rspec-hopper work` inside the app, on the app's bundle.
+    # Spawns `rspec-hopper work` inside the app, on the app's bundle. The
+    # suite itself runs under `bundle exec`, which exports the root project's
+    # lockfile path along with BUNDLE_GEMFILE; overriding only the Gemfile
+    # would make the child resolve the app's Gemfile against the gem's lock.
     def spawn_work(build_id:, worker_id:, redis_url:, args: [])
-      Fixtures.spawn(["work", "--build", build_id, "--worker", worker_id, "--redis", redis_url, *args],
-                     chdir: DIR, env: { "BUNDLE_GEMFILE" => GEMFILE })
+      Bundler.with_unbundled_env do
+        Fixtures.spawn(["work", "--build", build_id, "--worker", worker_id, "--redis", redis_url, *args],
+                       chdir: DIR, env: { "BUNDLE_GEMFILE" => GEMFILE })
+      end
     end
 
     # Per-process SQLite files, the flaky counter and logs of the last run.
