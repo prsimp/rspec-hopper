@@ -114,7 +114,9 @@ jobs:
       - run:
           name: Check the example app boots on its own bundle
           working_directory: examples/rails-app
-          command: bundle exec ruby -e 'require "./config/environment"; puts "#{Rails.version} #{SQLite3::VERSION}"'
+          # A block scalar: in a plain scalar, " #" would start a YAML comment.
+          command: |
+            bundle exec ruby -e 'require "./config/environment"; puts Rails.version, SQLite3::VERSION'
       - run:
           name: Run the Rails example integration spec
           command: |
