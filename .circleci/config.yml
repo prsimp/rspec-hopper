@@ -57,7 +57,16 @@ jobs:
       - image: cimg/ruby:4.0.6
     steps:
       - bundle_install
-      - run: bundle exec rubocop
+      # RuboCop parallelises by Etc.nprocessors, which inside a container
+      # reports the host's cores, not the class's one vCPU; a worker per host
+      # core does not fit in 2 GB and the step is killed. The counts are
+      # printed so the log shows the gap. Serial takes seconds for 70 files.
+      - run:
+          name: Show the processor counts
+          command: |
+            echo "nproc: $(nproc)"
+            ruby -retc -e 'puts "Etc.nprocessors: #{Etc.nprocessors}"'
+      - run: bundle exec rubocop --no-parallel
 
   spec:
     resource_class: small
