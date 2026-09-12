@@ -167,16 +167,35 @@ RSpec.configure do |config|
   end
 
   config.after(:suite) do
-    Datadog::CI.active_test_module&.finish
-    Datadog::CI.active_test_session&.finish
+    # `with_suite_hooks` runs this from an `ensure`, so it also fires while the
+    # worker is unwinding from an infrastructure failure — Redis unreachable,
+    # `CORRUPT`, `meta` gone. No example failed in that case, so check for the
+    # exception in flight or the session finishes green on a worker that died.
+    failed = !$!.nil? || RSpec.configuration.reporter.failed_examples.any?
+
+    test_module = Datadog::CI.active_test_module
+    test_session = Datadog::CI.active_test_session
+    failed ? test_module&.failed! : test_module&.passed!
+    failed ? test_session&.failed! : test_session&.passed!
+    test_module&.finish
+    test_session&.finish
   end
 end
 ```
 
-Two things to keep in mind. Each worker process opens its own session, so a build of ten
-workers reports ten sessions — Datadog's own guidance for `parallel_tests`-style
-parallelism. And `force_test_level_visibility` must stay off: it disables the
-suite-level visibility these calls depend on, and they silently return `nil` with it on.
+By the time `after(:suite)` runs, the reporter holds every example this worker
+finalized: each attempt replays its buffer as the unit finalizes, and the whole unit
+loop sits inside the suite hooks.
+
+Three things to keep in mind. Each worker process opens its own session, so a build of
+ten workers reports ten sessions — Datadog's own guidance for `parallel_tests`-style
+parallelism — and which files land in which session changes run to run, because the
+queue hands out work dynamically. `force_test_level_visibility` must stay off: it
+disables the suite-level visibility these calls depend on, and they silently return
+`nil` with it on. And a worker that aborts a hung unit exits through `exit!`, which runs
+no `ensure` and therefore no `after(:suite)`: that worker's session is never finished,
+and its tests are lost to Datadog even though `rspec-hopper report` still counts the
+unit.
 
 ## CLI reference
 
