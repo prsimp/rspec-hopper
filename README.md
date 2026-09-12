@@ -1,5 +1,8 @@
 # rspec-hopper
 
+[![Gem Version](https://badge.fury.io/rb/rspec-hopper.svg)](https://badge.fury.io/rb/rspec-hopper)
+[![CI](https://github.com/prsimp/rspec-hopper/actions/workflows/main.yml/badge.svg)](https://github.com/prsimp/rspec-hopper/actions/workflows/main.yml)
+
 rspec-hopper distributes an RSpec suite across many CI workers through a shared
 Redis, requeues flaky work, reclaims work from workers that die, and produces one
 authoritative pass/fail verdict for the whole build.
