@@ -20,6 +20,7 @@ Gem::Specification.new do |spec|
   spec.metadata["homepage_uri"] = spec.homepage
   spec.metadata["source_code_uri"] = "https://github.com/prsimp/rspec-hopper"
   spec.metadata["changelog_uri"] = "https://github.com/prsimp/rspec-hopper/blob/main/CHANGELOG.md"
+  spec.metadata["documentation_uri"] = "https://github.com/prsimp/rspec-hopper/blob/main/docs/DESIGN.md"
   spec.metadata["rubygems_mfa_required"] = "true"
 
   gemspec = File.basename(__FILE__)
