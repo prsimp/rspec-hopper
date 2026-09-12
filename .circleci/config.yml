@@ -60,7 +60,11 @@ jobs:
     steps:
       - bundle_install
       - wait_for_redis
-      - run: bundle exec rspec
+      # Documentation format, not the default dots: the progress formatter
+      # writes bare dots with no newline, so a two-minute run shows a
+      # log viewer nothing until the suite ends and it looks hung. One line
+      # per example is also what you want from the log when one fails.
+      - run: bundle exec rspec --format documentation
 
 workflows:
   ci:
