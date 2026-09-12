@@ -1,7 +1,7 @@
 # rspec-hopper
 
 [![Gem Version](https://badge.fury.io/rb/rspec-hopper.svg)](https://badge.fury.io/rb/rspec-hopper)
-[![CI](https://github.com/prsimp/rspec-hopper/actions/workflows/main.yml/badge.svg)](https://github.com/prsimp/rspec-hopper/actions/workflows/main.yml)
+[![CI](https://dl.circleci.com/status-badge/img/gh/prsimp/rspec-hopper/tree/main.svg?style=shield)](https://dl.circleci.com/status-badge/redirect/gh/prsimp/rspec-hopper/tree/main)
 
 rspec-hopper distributes an RSpec suite across many CI workers through a shared
 Redis, requeues flaky work, reclaims work from workers that die, and produces one
@@ -498,8 +498,11 @@ bundle exec rake          # specs, then rubocop
 Specs that need Redis are tagged `:redis`, use `HOPPER_TEST_REDIS_URL` (default
 `redis://127.0.0.1:6399/0`) and are skipped with a message when no server answers.
 Integration specs under `spec/integration` spawn real `rspec-hopper` processes against
-the fixture suites in `spec/fixtures/suites`. CI runs the suite on Ruby 3.2 through
-4.0 against Redis 7, plus Redis 6.2 and Valkey on the newest Ruby.
+the fixture suites in `spec/fixtures/suites`. CircleCI runs the suite on Ruby 3.2
+through 4.0 against Redis 7, plus Redis 6.2 and Valkey on the newest Ruby, and rubocop
+once (`.circleci/config.yml`). Releases stay on GitHub Actions, because RubyGems
+trusted publishing authenticates that workflow's OIDC token; the release job runs the
+same suite before it publishes.
 
 ### Releasing
 

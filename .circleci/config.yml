@@ -1,0 +1,93 @@
+version: 2.1
+
+# The gem is a library: it resolves dependencies fresh on every supported Ruby
+# and commits no lockfile, so the bundle cache is keyed on the gemspec and
+# Gemfile rather than on a lock.
+commands:
+  bundle_install:
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - gems-v1-{{ .Environment.CIRCLE_JOB }}-{{ checksum "rspec-hopper.gemspec" }}-{{ checksum "Gemfile" }}
+            - gems-v1-{{ .Environment.CIRCLE_JOB }}-
+      - run:
+          name: Install dependencies
+          command: |
+            bundle config set --local path vendor/bundle
+            bundle install --jobs 4 --retry 3
+      - save_cache:
+          key: gems-v1-{{ .Environment.CIRCLE_JOB }}-{{ checksum "rspec-hopper.gemspec" }}-{{ checksum "Gemfile" }}
+          paths:
+            - vendor/bundle
+
+  wait_for_redis:
+    steps:
+      - run:
+          name: Wait for the Redis service container
+          command: |
+            for _ in $(seq 1 60); do
+              if (exec 3<>/dev/tcp/127.0.0.1/6379) 2>/dev/null; then
+                echo "redis is up"
+                exit 0
+              fi
+              sleep 1
+            done
+            echo "redis never answered on 127.0.0.1:6379" >&2
+            exit 1
+
+jobs:
+  rubocop:
+    docker:
+      - image: cimg/ruby:4.0.6
+    steps:
+      - bundle_install
+      - run: bundle exec rubocop
+
+  spec:
+    parameters:
+      ruby:
+        type: string
+      server:
+        type: string
+    docker:
+      - image: cimg/ruby:<< parameters.ruby >>
+        environment:
+          # Service containers share the primary's network, so Redis answers on
+          # its own port rather than the 6399 the local bin/test-redis uses.
+          HOPPER_TEST_REDIS_URL: redis://127.0.0.1:6379/0
+      - image: << parameters.server >>
+    steps:
+      - bundle_install
+      - wait_for_redis
+      - run: bundle exec rspec
+
+workflows:
+  ci:
+    jobs:
+      - rubocop
+      - spec:
+          name: ruby-3.2-redis-7
+          ruby: "3.2"
+          server: redis:7-alpine
+      - spec:
+          name: ruby-3.3-redis-7
+          ruby: "3.3"
+          server: redis:7-alpine
+      - spec:
+          name: ruby-3.4-redis-7
+          ruby: "3.4"
+          server: redis:7-alpine
+      - spec:
+          name: ruby-4.0-redis-7
+          ruby: "4.0.6"
+          server: redis:7-alpine
+      # XAUTOCLAIM's reply shape differs between Redis 6.2 and 7.
+      - spec:
+          name: ruby-4.0-redis-6.2
+          ruby: "4.0.6"
+          server: redis:6.2-alpine
+      - spec:
+          name: ruby-4.0-valkey-8
+          ruby: "4.0.6"
+          server: valkey/valkey:8-alpine
