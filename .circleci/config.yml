@@ -44,15 +44,32 @@ commands:
             echo "redis never answered on 127.0.0.1:6379" >&2
             exit 1
 
+# Every job runs on the smallest Docker class. The suite is wait-bound: a full
+# local run takes about 144 s of wall clock for 28 s of CPU across every
+# process, and no single process exceeds 130 MB. Integration specs spawn at
+# most three workers plus the runner, all mostly asleep on Redis polls and
+# timeouts, so one vCPU and 2 GB are ample. If a timing-sensitive integration
+# example turns flaky here, move the spec jobs to medium before loosening it.
 jobs:
   rubocop:
+    resource_class: small
     docker:
       - image: cimg/ruby:4.0.6
     steps:
       - bundle_install
-      - run: bundle exec rubocop
+      # RuboCop parallelises by Etc.nprocessors, which inside a container
+      # reports the host's cores, not the class's one vCPU; a worker per host
+      # core does not fit in 2 GB and the step is killed. The counts are
+      # printed so the log shows the gap. Serial takes seconds for 70 files.
+      - run:
+          name: Show the processor counts
+          command: |
+            echo "nproc: $(nproc)"
+            ruby -retc -e 'puts "Etc.nprocessors: #{Etc.nprocessors}"'
+      - run: bundle exec rubocop --no-parallel
 
   spec:
+    resource_class: small
     parameters:
       ruby:
         type: string
