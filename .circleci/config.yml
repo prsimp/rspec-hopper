@@ -90,6 +90,7 @@ jobs:
   # and json. Its integration spec is skipped in the spec jobs above, where
   # that bundle is absent, and runs here on the newest Ruby only.
   rails-example:
+    resource_class: small
     docker:
       - image: cimg/ruby:4.0.6
         environment:
