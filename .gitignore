@@ -12,5 +12,7 @@ tmp/
 # lockfile is not committed.
 /Gemfile.lock
 
+/test-results/
+
 # rspec failure tracking
 .rspec_status

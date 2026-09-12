@@ -63,8 +63,19 @@ jobs:
       # Documentation format, not the default dots: the progress formatter
       # writes bare dots with no newline, so a two-minute run shows a
       # log viewer nothing until the suite ends and it looks hung. One line
-      # per example is also what you want from the log when one fails.
-      - run: bundle exec rspec --format documentation
+      # per example is also what you want from the log when one fails. The
+      # JUnit file goes to a second formatter, for CircleCI's test insights.
+      - run:
+          name: Run the specs
+          command: |
+            bundle exec rspec \
+              --format documentation \
+              --format RspecJunitFormatter --out test-results/rspec/results.xml
+      - store_test_results:
+          path: test-results
+      - store_artifacts:
+          path: test-results
+          destination: test-results
 
 workflows:
   ci:

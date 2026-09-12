@@ -366,6 +366,30 @@ you point several children at the console yourself.
 With `--processes 1` (the default) nothing is redirected: one worker owns the console
 and prints its summary as plain `rspec` would.
 
+#### A single-process worker can look hung in CI
+
+RSpec's default `progress` formatter writes a bare dot per example with no newline.
+Nothing in the gem buffers — rspec-core sets `sync` on the output stream, and hopper's
+own lines (`initialized build ...`, `Retrying ...`, abort warnings) end in newlines — but
+a log viewer that renders whole lines has nothing to show between them. A worker that
+spends ten minutes on a queue of slow files therefore looks like it has stopped, and a
+CI no-output timeout has nothing to reset it with.
+
+If that matters on your CI, give the console a formatter that emits lines and send the
+machine-readable one to a file:
+
+```sh
+rspec-hopper work --build "$B" --worker "$W" --redis "$R" \
+  --format documentation \
+  --format RspecJunitFormatter --out "tmp/junit-$W.xml" -- spec
+```
+
+This is the `--processes 1` case, so name the file yourself — `%{n}` is substituted only
+for forked children, and a single-process run passes the arguments to RSpec untouched.
+Above one process the console formatter is redirected to a file anyway (see above), so
+only hopper's own lines reach the console, and the build's progress is better watched
+through `rspec-hopper report`.
+
 ## Retries, reclaims and per-unit counters
 
 Each unit carries three counters, all visible in the attempt log:
@@ -500,7 +524,8 @@ Specs that need Redis are tagged `:redis`, use `HOPPER_TEST_REDIS_URL` (default
 Integration specs under `spec/integration` spawn real `rspec-hopper` processes against
 the fixture suites in `spec/fixtures/suites`. CircleCI runs the suite on Ruby 3.2
 through 4.0 against Redis 7, plus Redis 6.2 and Valkey on the newest Ruby, and rubocop
-once (`.circleci/config.yml`). Releases stay on GitHub Actions, because RubyGems
+once (`.circleci/config.yml`). Each spec job writes a JUnit file that CircleCI stores,
+so slow and failing examples are visible per job rather than only in the log. Releases stay on GitHub Actions, because RubyGems
 trusted publishing authenticates that workflow's OIDC token; the release job runs the
 same suite before it publishes.
 
