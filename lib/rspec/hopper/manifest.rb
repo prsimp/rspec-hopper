@@ -8,7 +8,7 @@ module RSpec
     # of `file_counts` in order; they are not stored separately.
     Manifest = Data.define(
       :total_units, :total_examples, :file_counts, :file_args,
-      :fingerprint, :seed, :ready_at, :revision, :load_errors
+      :fingerprint, :fingerprint_digests, :seed, :ready_at, :revision, :load_errors
     ) do
       # Builds a Manifest from `meta` exactly as HGETALL returns it (all string
       # values). Runtime fields such as `state` and `finalized_count` are ignored.
@@ -20,6 +20,7 @@ module RSpec
           file_counts: JSON.parse(meta.fetch("file_counts", "{}")),
           file_args: JSON.parse(meta.fetch("file_args", "[]")),
           fingerprint: meta["fingerprint"],
+          fingerprint_digests: parse_digests(meta["fingerprint_digests"]),
           seed: meta["seed"],
           ready_at: meta["ready_at"],
           revision: meta["revision"],
@@ -27,8 +28,35 @@ module RSpec
         )
       end
 
-      def initialize(total_examples:, file_counts:, file_args:, fingerprint: nil, seed: nil,
-                     total_units: file_counts.size, ready_at: nil, revision: nil, load_errors: [])
+      # Per-input digests of the initializer's fingerprint, for mismatch
+      # messages; absent from builds initialized by an older worker.
+      def self.parse_digests(value)
+        return nil if value.nil? || value.empty?
+
+        digests = JSON.parse(value)
+        digests.is_a?(Hash) ? digests : nil
+      rescue JSON::ParserError
+        nil
+      end
+
+      # Optional fields are nil when absent rather than empty strings, so a
+      # manifest read back from `meta` equals the one that was written.
+      def self.normalize_optional(fingerprint:, fingerprint_digests:, seed:, ready_at:, revision:)
+        {
+          fingerprint: presence(fingerprint)&.to_s,
+          fingerprint_digests: presence(fingerprint_digests)&.transform_keys(&:to_s)&.freeze,
+          seed: presence(seed)&.then { |s| Integer(s) },
+          ready_at: presence(ready_at)&.then { |ms| Integer(ms) },
+          revision: presence(revision)&.to_s
+        }
+      end
+
+      def self.presence(value)
+        value.nil? || (value.respond_to?(:empty?) && value.empty?) ? nil : value
+      end
+
+      def initialize(total_examples:, file_counts:, file_args:, fingerprint: nil, fingerprint_digests: nil,
+                     seed: nil, total_units: file_counts.size, ready_at: nil, revision: nil, load_errors: [])
         counts = file_counts.to_h { |path, count| [path.to_s, Integer(count)] }.freeze
         units = Integer(total_units)
         if units != counts.size
@@ -40,11 +68,9 @@ module RSpec
           total_examples: Integer(total_examples),
           file_counts: counts,
           file_args: Array(file_args).map(&:to_s).freeze,
-          fingerprint: presence(fingerprint)&.to_s,
-          seed: presence(seed)&.then { |s| Integer(s) },
-          ready_at: presence(ready_at)&.then { |ms| Integer(ms) },
-          revision: presence(revision)&.to_s,
-          load_errors: Array(load_errors).map(&:to_s).freeze
+          load_errors: Array(load_errors).map(&:to_s).freeze,
+          **self.class.normalize_optional(fingerprint: fingerprint, fingerprint_digests: fingerprint_digests,
+                                          seed: seed, ready_at: ready_at, revision: revision)
         )
       end
 
@@ -64,10 +90,7 @@ module RSpec
           "file_args" => JSON.generate(file_args),
           "load_errors" => JSON.generate(load_errors)
         }
-        meta["fingerprint"] = fingerprint unless fingerprint.nil?
-        meta["seed"] = seed.to_s unless seed.nil?
-        meta["ready_at"] = ready_at.to_s unless ready_at.nil?
-        meta["revision"] = revision unless revision.nil?
+        optional_meta.each { |key, value| meta[key] = value unless value.nil? }
         meta
       end
 
@@ -75,8 +98,15 @@ module RSpec
 
       private
 
-      def presence(value)
-        value.nil? || (value.respond_to?(:empty?) && value.empty?) ? nil : value
+      # Written only when set; an absent field must not become an empty string.
+      def optional_meta
+        {
+          "fingerprint" => fingerprint,
+          "fingerprint_digests" => fingerprint_digests && JSON.generate(fingerprint_digests),
+          "seed" => seed&.to_s,
+          "ready_at" => ready_at&.to_s,
+          "revision" => revision
+        }
       end
     end
   end

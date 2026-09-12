@@ -137,7 +137,8 @@ module RSpec
       def check_fingerprint(manifest)
         return if manifest.fingerprint.nil? || manifest.fingerprint == suite.fingerprint.value
 
-        raise FingerprintMismatch, Fingerprint::Mismatch.explain(suite.fingerprint, manifest.fingerprint)
+        raise FingerprintMismatch,
+              Fingerprint::Mismatch.explain(suite.fingerprint, manifest.fingerprint, manifest.fingerprint_digests)
       end
 
       # --- the loop -----------------------------------------------------------

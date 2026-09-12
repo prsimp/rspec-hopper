@@ -69,6 +69,30 @@ RSpec.describe RSpec::Hopper::Manifest do
     end
   end
 
+  describe "fingerprint digests" do
+    let(:digests) do
+      { "file_args" => "0123456789abcdef", "example_ids" => "fedcba9876543210", "example_ids_count" => 5 }
+    end
+    let(:with_digests) { described_class.new(**manifest.to_h, fingerprint_digests: digests) }
+
+    it "JSON-encodes them into meta and reads them back" do
+      expect(with_digests.to_meta.fetch("fingerprint_digests")).to eq(JSON.generate(digests))
+      expect(described_class.from_meta(with_digests.to_meta)).to eq(with_digests)
+    end
+
+    it "is absent from meta and nil when the initializer recorded none" do
+      expect(manifest.to_meta).not_to have_key("fingerprint_digests")
+      expect(described_class.from_meta(manifest.to_meta).fingerprint_digests).to be_nil
+    end
+
+    it "treats an unparseable or non-object recording as absent" do
+      ["not json", "[1,2]", ""].each do |value|
+        meta = manifest.to_meta.merge("fingerprint_digests" => value)
+        expect(described_class.from_meta(meta).fingerprint_digests).to be_nil
+      end
+    end
+  end
+
   describe ".from_meta" do
     it "round-trips through to_meta" do
       expect(described_class.from_meta(manifest.to_meta)).to eq(manifest)

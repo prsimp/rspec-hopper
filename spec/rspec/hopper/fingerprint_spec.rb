@@ -47,27 +47,70 @@ RSpec.describe RSpec::Hopper::Fingerprint do
     end
   end
 
+  describe "#digests" do
+    let(:fingerprint) { described_class.new(inputs) }
+
+    it "is one short digest per input plus the example-id count" do
+      expect(fingerprint.digests.keys).to contain_exactly(*described_class::INPUT_KEYS, "example_ids_count")
+      expect(fingerprint.digests.fetch("file_args")).to match(/\A[0-9a-f]{16}\z/)
+      expect(fingerprint.digests.fetch("example_ids_count")).to eq(1)
+    end
+
+    it "changes only for the input that changed" do
+      other = described_class.new(inputs.merge("example_ids" => ["./spec/a_spec.rb[1:2]"])).digests
+      expect(other.fetch("example_ids")).not_to eq(fingerprint.digests.fetch("example_ids"))
+      expect(other.fetch("file_args")).to eq(fingerprint.digests.fetch("file_args"))
+    end
+
+    it "does not grow with the suite: the example-id list is digested, not stored" do
+      many = described_class.new(inputs.merge("example_ids" => Array.new(5_000) { |i| "./spec/a_spec.rb[1:#{i}]" }))
+      expect(JSON.generate(many.digests).bytesize).to be < 500
+      expect(many.digests.fetch("example_ids_count")).to eq(5_000)
+    end
+  end
+
   describe "Mismatch.explain" do
     let(:local) { described_class.new(inputs) }
 
-    it "shows both values and a local summary when remote inputs are unknown" do
+    it "shows both values and a local summary when the manifest records no digests" do
       message = described_class::Mismatch.explain(local, "abc123")
       expect(message).to include(local.value).and include("abc123")
       expect(message).to include("local inputs: file_args=[\"spec\"]").and include("example_ids=1")
+      expect(message).not_to include("differing inputs")
     end
 
-    it "names the differing inputs and counts differing example ids when remote inputs are available" do
-      remote = inputs.merge("file_args" => ["spec/models"],
-                            "example_ids" => ["./spec/a_spec.rb[1:1]", "./spec/b_spec.rb[1:1]",
-                                              "./spec/c_spec.rb[1:1]"])
-      message = described_class::Mismatch.explain(local, "abc123", JSON.generate(remote))
+    it "names the differing inputs and both example-id counts when the manifest records digests" do
+      remote = described_class.new(inputs.merge("file_args" => ["spec/models"],
+                                                "example_ids" => ["./spec/a_spec.rb[1:1]", "./spec/b_spec.rb[1:1]",
+                                                                  "./spec/c_spec.rb[1:1]"]))
+      message = described_class::Mismatch.explain(local, remote.value, JSON.generate(remote.digests))
       expect(message).to include("differing inputs: file_args, example_ids")
-      expect(message).to include('file_args: local=["spec"] remote=["spec/models"]')
-      expect(message).to include("example_ids: 2 differ (local 1, remote 3)")
+      expect(message).to include("example_ids: this worker selects 1, the initializer selected 3")
+      expect(message).to include("local inputs: file_args=[\"spec\"]")
     end
 
-    it "tolerates unparseable remote inputs" do
-      expect(described_class::Mismatch.explain(local, "abc", "not json")).to include("local inputs:")
+    it "says the ids differ when the counts match" do
+      remote = described_class.new(inputs.merge("example_ids" => ["./spec/b_spec.rb[1:1]"]))
+      message = described_class::Mismatch.explain(local, remote.value, remote.digests)
+      expect(message).to include("example_ids: this worker and the initializer both select 1, but the ids differ")
+    end
+
+    it "omits the example-id line when only other inputs differ" do
+      remote = described_class.new(inputs.merge("order" => "random"))
+      message = described_class::Mismatch.explain(local, remote.value, remote.digests)
+      expect(message).to include("differing inputs: order")
+      expect(message).not_to include("example_ids: this worker")
+    end
+
+    it "reports identical inputs as a gem-version difference" do
+      message = described_class::Mismatch.explain(local, "abc123", local.digests)
+      expect(message).to include("recorded inputs are identical; the fingerprint algorithm may differ")
+    end
+
+    it "tolerates unparseable or non-hash remote digests" do
+      ["not json", "[1,2]", ""].each do |remote|
+        expect(described_class::Mismatch.explain(local, "abc", remote)).to include("local inputs:")
+      end
     end
   end
 

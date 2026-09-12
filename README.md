@@ -86,7 +86,8 @@ worker, `<hostname>-<pid>` is used.
 2. The first worker to take a short lease publishes the build: one **unit** per spec
    file that has at least one selected example, plus a manifest (unit and example
    counts, the file arguments, the suite fingerprint, the seed). Every other worker
-   waits for the manifest, then checks that its own suite fingerprint matches.
+   waits for the manifest, then checks that its own suite fingerprint matches. A
+   worker that does not match exits 2 and names the inputs that differ.
 3. Workers loop: reclaim a unit whose owner stopped heartbeating, or reserve the next
    unit (requeued units first), run all of that file's top-level example groups through
    `ExampleGroup.run`, then finalize the unit as passed or failed, or requeue it.
@@ -426,7 +427,7 @@ build's keys share one slot; Cluster itself is not supported in Phase 1.
 | `units` | stream | One entry per unit (`id`, `type`), consumer group `workers`. | inactivity (`--ttl`) |
 | `units:priority` | stream | Requeued units, read before `units`. Consumer group `workers`. | inactivity |
 | `attempts` | stream | The attempt log. | inactivity |
-| `meta` | hash | Manifest fields (`total_units`, `total_examples`, `file_counts`, `file_args`, `fingerprint`, `seed`, `revision`, `load_errors`), `state` (`ready` or `init_failed`), `ready_at`, `finalized_count`, `requeued_units_count`, and the recorded `max_requeues`, `requeue_tolerance`, `max_reclaims`, `timeout` and `ttl`. | inactivity |
+| `meta` | hash | Manifest fields (`total_units`, `total_examples`, `file_counts`, `file_args`, `fingerprint`, `fingerprint_digests`, `seed`, `revision`, `load_errors`), `state` (`ready` or `init_failed`), `ready_at`, `finalized_count`, `requeued_units_count`, and the recorded `max_requeues`, `requeue_tolerance`, `max_reclaims`, `timeout` and `ttl`. | inactivity |
 | `unit_state` | hash | Unit id to `{"retry_index", "reclaim_count", "entered_retry"}`. | inactivity |
 | `workers` | hash | Worker id to `{"last_seen", "current_unit", "processed"}`. | inactivity |
 | `leader` | string | Initialization lease, `<worker>:<nonce>`. | 60 s fixed, never renewed |

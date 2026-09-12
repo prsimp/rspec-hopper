@@ -71,7 +71,9 @@ single field `json`.
 `meta` fields (all strings in Redis): `state` (`ready`|`init_failed`), `ready_at`
 (epoch ms), `finalized_count`, `requeued_units_count`, `total_units`,
 `total_examples`, `file_counts` (JSON object path -> int), `file_args` (JSON array),
-`fingerprint`, `seed`, `revision` (may be absent), `load_errors` (JSON array of strings),
+`fingerprint`, `fingerprint_digests` (JSON object: one short digest per fingerprint
+input plus `example_ids_count`, used to explain a mismatch), `seed`, `revision` (may be
+absent), `load_errors` (JSON array of strings),
 `max_requeues`, `requeue_tolerance`, `max_reclaims`, `timeout`, `ttl`. The budget
 values are frozen into meta at initialization; the transition script reads them from
 `meta` first and falls back to ARGV only when the field is absent, so every worker
@@ -236,7 +238,8 @@ A unit reclaimed and then passing with no `requeued` event is not flaky.
 ## Manifest
 
 `Manifest = Data.define(:total_units, :total_examples, :file_counts, :file_args,
-:fingerprint, :seed, :ready_at, :revision, :load_errors)` — `#unit_ids` is derived: the
+:fingerprint, :fingerprint_digests, :seed, :ready_at, :revision, :load_errors)` —
+`#unit_ids` is derived: the
 keys of `file_counts` in order (`total_units == unit_ids.size`).
 `#to_meta` -> Hash of String->String for HSET (JSON-encoding the nested fields);
 `Manifest.from_meta(hash)` inverse (ignores the extra runtime fields). `ready_at` is

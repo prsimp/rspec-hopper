@@ -118,6 +118,9 @@ RSpec.describe "build fencing and verdict guards", :integration, :redis do
       expect(mismatch.stderr).to match(/suite fingerprint mismatch: this worker computed [0-9a-f]{64} but the build/)
       expect(mismatch.stderr).to include("manifest records #{manifest_fingerprint}")
       expect(mismatch.stderr).not_to include("computed #{manifest_fingerprint}")
+      expect(mismatch.stderr).to include("differing inputs: filter, example_ids")
+      expect(mismatch.stderr)
+        .to include("example_ids: this worker and the initializer both select 3, but the ids differ")
       expect(events_of("delivered").map { |e| e["worker_id"] }).not_to include("w2")
       expect(redis.hkeys(keys.workers)).not_to include("w2")
 
@@ -148,6 +151,8 @@ RSpec.describe "build fencing and verdict guards", :integration, :redis do
         expect(other.exit_code).to eq(2)
         expect(other.stderr).to match(/suite fingerprint mismatch: this worker computed [0-9a-f]{64} but the build/)
         expect(other.stderr).to include("manifest records #{meta.fetch("fingerprint")}")
+        expect(other.stderr).to include("differing inputs: example_ids")
+        expect(other.stderr).to include("example_ids: this worker selects 8, the initializer selected 7")
         expect(other.stderr).to include("example_ids=8")
         expect(events_of("delivered").map { |e| e["worker_id"] }).not_to include("w2")
       ensure

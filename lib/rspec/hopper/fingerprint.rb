@@ -12,6 +12,10 @@ module RSpec
     class Fingerprint
       INPUT_KEYS = %w[file_args filter pattern exclude_pattern order example_ids revision].freeze
       PROC_ADDRESS = /0x[0-9a-f]+@?/
+      # Per-input digests are recorded in the manifest so a mismatching worker
+      # can name the inputs that differ. Truncated: they are compared with each
+      # other, never used as a security boundary, and `meta` stays small.
+      DIGEST_LENGTH = 16
 
       attr_reader :value, :inputs
 
@@ -69,6 +73,12 @@ module RSpec
           end
         end
 
+        # A short digest of one input value, stable across Ruby versions
+        # because `render_value` already avoids the built-in container inspect.
+        def digest(value)
+          Digest::SHA256.hexdigest(JSON.generate([canonical(value)]))[0, DIGEST_LENGTH]
+        end
+
         def canonical(object)
           case object
           when Hash then object.keys.map(&:to_s).sort.to_h { |k| [k, canonical(object[k] || object[k.to_sym])] }
@@ -94,6 +104,16 @@ module RSpec
 
       def to_json(*) = JSON.generate(inputs, *)
 
+      # The manifest records these, not the inputs themselves: the sorted
+      # example-id list of a real suite is hundreds of kilobytes, and `meta`
+      # has to stay small. Digests name the inputs that differ; the example-id
+      # count turns "example_ids differ" into something an operator can act on.
+      def digests
+        @digests ||= INPUT_KEYS.to_h { |key| [key, self.class.digest(inputs[key])] }
+                               .merge("example_ids_count" => inputs["example_ids"].size)
+                               .freeze
+      end
+
       # One line describing the inputs, for mismatch messages.
       def summary
         [
@@ -113,42 +133,48 @@ module RSpec
 
         # @param local [Fingerprint] this worker's fingerprint
         # @param remote_value [String] the manifest's fingerprint
-        # @param remote_inputs [String, Hash, nil] the initializer's inputs, when available
-        def explain(local, remote_value, remote_inputs = nil)
+        # @param remote_digests [String, Hash, nil] the initializer's per-input
+        #   digests, as recorded in the manifest, when available
+        def explain(local, remote_value, remote_digests = nil)
           lines = ["suite fingerprint mismatch: this worker computed #{local.value} " \
                    "but the build manifest records #{remote_value}"]
-          remote = parse(remote_inputs)
-          if remote
-            lines.concat(differences(local.inputs, remote))
-          else
-            lines << "local inputs: #{local.summary}"
-          end
+          remote = parse(remote_digests)
+          lines.concat(differences(local.digests, remote)) if remote
+          lines << "local inputs: #{local.summary}"
           lines.join("\n")
         end
 
+        # Names the inputs whose digests differ. Only the example ids carry a
+        # count, because that is the difference an operator cannot see from
+        # their own command line: a stale checkout selecting a different set.
         def differences(local, remote)
           keys = Fingerprint::INPUT_KEYS.reject { |key| local[key] == remote[key] }
-          return ["inputs are identical; the fingerprint algorithm may differ between gem versions"] if keys.empty?
+          if keys.empty?
+            return ["recorded inputs are identical; the fingerprint algorithm may differ between gem versions"]
+          end
 
           lines = ["differing inputs: #{keys.join(", ")}"]
-          keys.each do |key|
-            next if key == "example_ids"
-
-            lines << "  #{key}: local=#{local[key].inspect} remote=#{remote[key].inspect}"
-          end
-          if keys.include?("example_ids")
-            differing = (local["example_ids"] - remote["example_ids"]) | (remote["example_ids"] - local["example_ids"])
-            lines << "  example_ids: #{differing.size} differ (local #{local["example_ids"].size}, " \
-                     "remote #{remote["example_ids"].size})"
-          end
+          lines << "  #{example_id_counts(local, remote)}" if keys.include?("example_ids")
           lines
         end
 
-        def parse(remote_inputs)
-          case remote_inputs
+        # Equal counts with differing digests mean a checkout that renames or
+        # moves examples rather than one that adds or removes them.
+        def example_id_counts(local, remote)
+          mine = local["example_ids_count"]
+          theirs = remote["example_ids_count"]
+          return "example_ids: this worker selects #{mine}, the initializer selected #{theirs}" unless mine == theirs
+
+          "example_ids: this worker and the initializer both select #{mine}, but the ids differ"
+        end
+
+        def parse(remote_digests)
+          case remote_digests
           when nil, "" then nil
-          when Hash then Fingerprint.canonical(remote_inputs)
-          else Fingerprint.canonical(JSON.parse(remote_inputs.to_s))
+          when Hash then remote_digests.transform_keys(&:to_s)
+          else
+            parsed = JSON.parse(remote_digests.to_s)
+            parsed.is_a?(Hash) ? parsed.transform_keys(&:to_s) : nil
           end
         rescue JSON::ParserError
           nil

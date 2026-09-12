@@ -112,7 +112,8 @@ module RSpec
         def to_manifest(revision: config.revision)
           Manifest.new(
             total_examples: total_examples, file_counts: file_counts, file_args: file_args,
-            fingerprint: fingerprint.value, seed: configuration.seed, revision: revision, load_errors: load_errors
+            fingerprint: fingerprint.value, fingerprint_digests: fingerprint.digests,
+            seed: configuration.seed, revision: revision, load_errors: load_errors
           )
         end
 
