@@ -85,10 +85,56 @@ jobs:
           path: test-results
           destination: test-results
 
+  # The Rails example under examples/rails-app has its own bundle (Rails,
+  # SQLite, rspec-rails) so the gem's dependencies stay at rspec-core, redis
+  # and json. Its integration spec is skipped in the spec jobs above, where
+  # that bundle is absent, and runs here on the newest Ruby only.
+  rails-example:
+    resource_class: small
+    docker:
+      - image: cimg/ruby:4.0.6
+        environment:
+          HOPPER_TEST_REDIS_URL: redis://127.0.0.1:6379/0
+      - image: redis:7-alpine
+    steps:
+      - bundle_install
+      - restore_cache:
+          keys:
+            - rails-example-v1-{{ checksum ".ruby-version-lock" }}-{{ checksum "examples/rails-app/Gemfile.lock" }}
+      # Frozen: the app commits its lockfile, so a lock that no longer matches
+      # the Gemfile or lacks this platform fails here with Bundler's own
+      # message, rather than being rewritten and failing later inside a
+      # spawned worker's bundler/setup.
+      - run:
+          name: Install the example app's bundle
+          working_directory: examples/rails-app
+          command: |
+            bundle config set --local path vendor/bundle
+            bundle config set --local frozen true
+            bundle install --jobs 4 --retry 3
+      - run:
+          name: Check the example app boots on its own bundle
+          working_directory: examples/rails-app
+          # A block scalar: in a plain scalar, " #" would start a YAML comment.
+          command: |
+            bundle exec ruby -e 'require "./config/environment"; puts Rails.version, SQLite3::VERSION'
+      - run:
+          name: Run the Rails example integration spec
+          command: |
+            bundle exec rspec spec/integration/rails_example_spec.rb \
+              --format documentation \
+              --format RspecJunitFormatter --out test-results/rspec/results.xml
+      - store_test_results:
+          path: test-results
+      - store_artifacts:
+          path: test-results
+          destination: test-results
+
 workflows:
   ci:
     jobs:
       - rubocop
+      - rails-example
       - spec:
           name: ruby-3.2-redis-7
           ruby: "3.2"

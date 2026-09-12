@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- A Rails example application under `examples/rails-app`, with its own bundle, that CI
+  drives through three shared-boot children in both unit modes: per-process SQLite
+  databases chosen by `TEST_ENV_NUMBER`, the README's fork hooks and database guard,
+  transactional tests, `before(:all)` records and a request spec.
 - `--unit example`: one work unit per selected example instead of per spec file.
   Examples are queued in the order RSpec would run them under the build seed, run
   through their file's group with the selection narrowed to the one example (context

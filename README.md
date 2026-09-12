@@ -415,6 +415,10 @@ if defined?(RSpec::Hopper)
 end
 ```
 
+A runnable version of this recipe, with the guard below, is the Rails application under
+[`examples/rails-app`](examples/rails-app), which the gem's own CI drives through three
+shared-boot children.
+
 The hook receives the child's `TEST_ENV_NUMBER` value (`""` or `"2"`..`"N"`); it is
 also already set in `ENV`. Registering hooks in single-process or per-process mode is
 harmless; they are only run in shared mode.
@@ -427,7 +431,7 @@ first unit, and a failure there makes the worker exit 2:
 RSpec.configure do |config|
   config.before(:suite) do
     suffix = ENV.fetch("TEST_ENV_NUMBER", "")
-    database = ActiveRecord::Base.connection.current_database
+    database = ActiveRecord::Base.connection_db_config.database.to_s
     unless database.end_with?(suffix)
       raise "worker #{ENV["TEST_ENV_NUMBER"].inspect} is connected to #{database}"
     end
@@ -622,9 +626,11 @@ bundle exec rake          # specs, then rubocop
 Specs that need Redis are tagged `:redis`, use `HOPPER_TEST_REDIS_URL` (default
 `redis://127.0.0.1:6399/0`) and are skipped with a message when no server answers.
 Integration specs under `spec/integration` spawn real `rspec-hopper` processes against
-the fixture suites in `spec/fixtures/suites`. CircleCI runs the suite on Ruby 3.2
-through 4.0 against Redis 7, plus Redis 6.2 and Valkey on the newest Ruby, and rubocop
-once (`.circleci/config.yml`). Each spec job writes a JUnit file that CircleCI stores,
+the fixture suites in `spec/fixtures/suites`, and `spec/integration/rails_example_spec.rb`
+against the Rails application in `examples/rails-app`, which has its own bundle: run
+`bundle install` there once, or the spec skips itself. CircleCI runs the suite on Ruby 3.2
+through 4.0 against Redis 7, plus Redis 6.2 and Valkey on the newest Ruby, the Rails
+example once, and rubocop once (`.circleci/config.yml`). Each spec job writes a JUnit file that CircleCI stores,
 so slow and failing examples are visible per job rather than only in the log. Releases stay on GitHub Actions, because RubyGems
 trusted publishing authenticates that workflow's OIDC token; the release job runs the
 same suite before it publishes.

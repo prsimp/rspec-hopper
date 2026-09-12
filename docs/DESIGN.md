@@ -43,6 +43,7 @@ spec/rspec/hopper/**                       unit specs, mirror lib layout
 spec/contract/**                           example_reset, example_subset, prepend coexistence
 spec/fixtures/suites/<name>/               fixture suites (each has .rspec, spec/, optional spec_helper)
 spec/integration/**                        spawn real `exe/rspec-hopper work` processes
+examples/rails-app/                        minimal Rails app with its own bundle; driven by spec/integration/rails_example_spec.rb
 ```
 
 Namespace is `RSpec::Hopper` (capital S). Runtime deps: rspec-core, redis, json only.
