@@ -160,7 +160,7 @@ module RSpec
       def verdict
         if @manifest.empty? && !config.allow_empty
           Outcome.new(verdict: "failed", exit_code: ExitCode::TEST_FAILURE,
-                      headline: "#{@manifest.file_args.size} files given, 0 examples selected",
+                      headline: "#{count(@manifest.file_args.size, "file")} given, 0 examples selected",
                       details: @manifest.file_args)
         elsif @manifest.total_examples < config.min_examples
           Outcome.new(verdict: "failed", exit_code: ExitCode::TEST_FAILURE,
@@ -176,6 +176,8 @@ module RSpec
       end
 
       def gap = "#{@finalized_count} of #{@manifest.total_units} units finalized"
+
+      def count(number, noun) = "#{number} #{number == 1 ? noun : "#{noun}s"}"
 
       def never_finalized
         return [] unless @manifest

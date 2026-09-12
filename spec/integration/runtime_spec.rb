@@ -152,6 +152,36 @@ RSpec.describe "rspec-hopper work runtime", :integration, :redis do
     end
   end
 
+  describe "a suite that selects nothing (zero-examples)" do
+    it "publishes an empty manifest, exits the workers 0 and fails the report unless --allow-empty" do
+      handles = spawn_workers(2, fixture: "zero-examples")
+      expect(wait_all(handles, timeout: 30)).to eq("w1" => 0, "w2" => 0)
+
+      # An empty queue is not completion: the build is complete because
+      # finalized_count reached total_units, which happens to be zero.
+      man = manifest
+      expect(man.total_units).to eq(0)
+      expect(man.total_examples).to eq(0)
+      expect(man.file_args).to eq(["spec"])
+      expect(man.load_errors).to be_empty
+      expect(queue.status).to be_ready
+      expect(finalized_count).to eq(0)
+      expect(events("delivered")).to be_empty
+      expect(events("worker_error")).to be_empty
+
+      report = run_report(args: ["--summary-out", summary_path])
+      expect(report.exit_code).to eq(1), report.stdout
+      expect(report.stdout).to include("1 file given, 0 examples selected")
+      expect(summary).to include("verdict" => "failed", "total_units" => 0, "total_examples" => 0,
+                                 "finalized_count" => 0)
+
+      allowed = run_report(args: ["--allow-empty"])
+      expect(allowed.exit_code).to eq(0), allowed.stdout
+      expect(allowed.stdout).to include("passed")
+      expect_consistent_build
+    end
+  end
+
   describe "every finished build (property-style, two workers each)" do
     fixtures = {
       "all-pass" => { exit: 0, units: 3, examples: 7 },

@@ -227,6 +227,16 @@ RSpec.describe RSpec::Hopper::Report do
                                         "file_args" => empty.file_args)
     end
 
+    it "says 'file' when a single file argument selected nothing" do
+      empty = RSpec::Hopper::Manifest.new(total_examples: 0, file_counts: {}, file_args: %w[spec/only_spec.rb],
+                                          fingerprint: "fp", seed: 1, ready_at: ready_at)
+      status = status_of(state: "ready", tombstone: true, meta: empty.to_meta.merge("state" => "ready"))
+      report = report_for(fake_queue_class.new(statuses: [status], finalized: [0], workers: [{}]))
+
+      expect(report.run(out: out)).to eq(1)
+      expect(out.string).to include("1 file given, 0 examples selected")
+    end
+
     context "with --allow-empty" do
       let(:config_overrides) { { allow_empty: true } }
 
