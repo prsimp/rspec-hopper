@@ -9,7 +9,11 @@ module RSpec
       # renewing; after a further `timeout` it aborts the whole process, since
       # the hung test thread cannot be interrupted safely.
       class Heartbeat
-        attr_reader :reservation, :abandoned_at, :renewals
+        # How long to wait before retrying a renewal that failed on a Redis
+        # connection error, capped by the normal interval.
+        RETRY_INTERVAL = 1.0
+
+        attr_reader :reservation, :abandoned_at, :renewals, :renewal_failures
 
         # @param clock [#call] monotonic seconds
         # @param sleeper [#call, nil] waits for the given seconds; nil uses an
@@ -30,6 +34,7 @@ module RSpec
           @stale = false
           @abandoned_at = nil
           @renewals = 0
+          @renewal_failures = 0
         end
 
         def interval = @config.heartbeat_interval
@@ -85,7 +90,7 @@ module RSpec
             result = tick(@clock.call)
             break if %i[aborted stale].include?(result)
 
-            wait(interval)
+            wait(result == :retrying ? [RETRY_INTERVAL, interval].min : interval)
           end
         end
 
@@ -101,21 +106,56 @@ module RSpec
           @queue.heartbeat(@reservation)
           @last_renewal = now
           @renewals += 1
+          recovered if @renewal_failures.positive?
           :renewed
         rescue StaleReservation
           @stale = true
           :stale
+        rescue REDIS_ERROR => e
+          failed_renewal(e, now)
         end
 
+        # A connection error is not yet a lost unit: the reservation stays this
+        # worker's until `timeout` passes without a renewal. Retry until then
+        # rather than killing a worker that is running tests fine, and give up
+        # once the entry is reclaimable, when carrying on would only let a
+        # sibling run the unit while this process still owns its output.
+        def failed_renewal(error, now)
+          @renewal_failures += 1
+          raise error if now - @last_renewal >= @config.timeout
+
+          if @renewal_failures == 1
+            warn_heartbeat "heartbeat failed (#{error.class}: #{error.message}); " \
+                           "retrying for up to #{@config.timeout}s"
+          end
+          :retrying
+        end
+
+        def recovered
+          warn_heartbeat "heartbeat recovered after #{@renewal_failures} failed " \
+                         "#{@renewal_failures == 1 ? "attempt" : "attempts"}"
+          @renewal_failures = 0
+        end
+
+        def warn_heartbeat(message)
+          @err.puts "[hopper #{@worker_id}] #{@reservation.unit_id}: #{message}"
+          @err.flush if @err.respond_to?(:flush)
+        end
+
+        # The `abandoned` event is a warning, not a terminal state, so a Redis
+        # error while recording it retries on the next tick and never ends the
+        # worker: the abort at `max_unit_duration + timeout` still fires.
         def abandon!(elapsed)
           return :abandoned if @abandoned_at
 
-          @abandoned_at = elapsed
           @queue.record_abandoned(@reservation, elapsed_ms: (elapsed * 1000).round)
+          @abandoned_at = elapsed
           :abandoned
         rescue StaleReservation
           @stale = true
           :stale
+        rescue REDIS_ERROR
+          :retrying
         end
 
         def abort!

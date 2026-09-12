@@ -58,6 +58,72 @@ RSpec.describe RSpec::Hopper::Worker::Heartbeat do
     expect(err.string).to eq("[hopper w1] Aborting worker: ./spec/a_spec.rb exceeded 100s\n")
   end
 
+  describe "a Redis connection error while renewing" do
+    let(:blip) { Redis::CannotConnectError.new("Connection refused") }
+
+    it "retries rather than ending a worker that is running tests fine" do
+      allow(queue).to receive(:heartbeat).and_raise(blip)
+      hb = heartbeat.prime
+
+      expect(hb.tick(1_010.0)).to eq(:retrying)
+      expect(hb.renewal_failures).to eq(1)
+      expect(hb).not_to be_stale
+      expect(err.string).to include("heartbeat failed (Redis::CannotConnectError: Connection refused); " \
+                                    "retrying for up to 30s")
+
+      allow(queue).to receive(:heartbeat).and_call_original
+      expect(hb.tick(1_011.0)).to eq(:renewed)
+      expect(hb.renewal_failures).to be_zero
+      expect(hb.renewals).to eq(1)
+      expect(err.string).to include("heartbeat recovered after 1 failed attempt")
+    end
+
+    it "retries on every tick until the reservation becomes reclaimable, then gives up" do
+      allow(queue).to receive(:heartbeat).and_raise(blip)
+      hb = heartbeat.prime
+
+      expect(hb.tick(1_010.0)).to eq(:retrying)
+      expect(hb.tick(1_020.0)).to eq(:retrying)
+      expect(hb.tick(1_029.9)).to eq(:retrying)
+      expect { hb.tick(1_030.0) }.to raise_error(Redis::CannotConnectError)
+      expect(hb.renewal_failures).to eq(4)
+      expect(err.string.lines.grep(/heartbeat failed/).size).to eq(1)
+    end
+
+    it "waits a second rather than a full interval before retrying" do
+      allow(queue).to receive(:heartbeat).and_raise(blip)
+      waits = []
+      hb = heartbeat(sleeper: lambda { |seconds|
+        waits << seconds
+        clock.advance(seconds)
+      })
+      hb.start
+      Timeout.timeout(2) { sleep 0.005 until hb.renewal_failures >= 2 }
+      begin
+        hb.stop
+      rescue Redis::CannotConnectError
+        # once the reservation is reclaimable the thread gives up; join re-raises
+      end
+
+      expect(waits.first).to eq(10.0)
+      expect(waits[1]).to eq(1.0)
+    end
+
+    it "keeps retrying the abandoned event without ending the worker" do
+      allow(queue).to receive(:record_abandoned).and_raise(blip)
+      hb = heartbeat.prime
+
+      expect(hb.tick(1_100.0)).to eq(:retrying)
+      expect(hb).not_to be_abandoned
+      expect(hb.tick(1_129.0)).to eq(:retrying)
+
+      allow(queue).to receive(:record_abandoned).and_call_original
+      expect(hb.tick(1_129.5)).to eq(:abandoned)
+      expect(hb).to be_abandoned
+      expect(queue.events_of("abandoned").size).to eq(1)
+    end
+  end
+
   it "returns :stopped after stop" do
     hb = heartbeat.prime
     hb.stop

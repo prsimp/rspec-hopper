@@ -387,6 +387,13 @@ After that same window the worker prints `Aborting worker: ./spec/foo_spec.rb ex
 that finishes inside the window finalizes normally and the `abandoned` event stands as
 a warning.
 
+A renewal that fails because Redis is briefly unreachable is retried every second
+rather than ending the worker: the reservation stays this worker's until `--timeout`
+passes without a renewal, so a blip shorter than that costs nothing. The worker prints
+one line when renewals start failing and another when they recover. If the window does
+pass, the unit is reclaimable by a sibling and the worker exits 2 rather than carrying
+on with a unit it no longer owns.
+
 ## Attempt log
 
 `hopper:{<build>}:attempts` is a Redis stream of JSON events, one per stream entry

@@ -318,6 +318,13 @@ failure still fails `dump_summary` — correct.
 every `min(timeout/3, 30)` s call `queue.heartbeat(reservation)` (swallow
 `StaleReservation`: stop heartbeating, flag `stale` so the runner knows the result
 will be rejected — still let the unit finish; the finalize will get STALE anyway).
+A `Redis::BaseConnectionError` from a renewal is retried after `RETRY_INTERVAL` (1 s,
+capped by the interval) instead of killing the thread, until `timeout` has passed since
+the last successful renewal, at which point the entry is reclaimable and the error is
+re-raised (it surfaces through `Thread#join` in `stop` and the worker exits 2). The
+first failure and the recovery each print one line. The same error while recording
+`abandoned` only retries: that event is a warning, and the abort at
+`max_unit_duration + timeout` still fires.
 After `max_unit_duration` elapsed: `queue.record_abandoned(reservation, elapsed_ms:)`
 (one more queue verb; the script mode `abandoned` appends the event, fenced), stop
 renewing; after a further `timeout`: print `Aborting worker: <unit> exceeded <s>s` to
