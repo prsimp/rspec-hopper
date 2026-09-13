@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-13
+
 - A Rails example application under `examples/rails-app`, with its own bundle, that CI
   drives through three shared-boot children in both unit modes: per-process SQLite
   databases chosen by `TEST_ENV_NUMBER`, the README's fork hooks and database guard,
