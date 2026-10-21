@@ -99,11 +99,12 @@ module RSpec
         end
 
         # Priority stream without blocking, then units with BLOCK, then delivery
-        # accounting. Returns nil on an empty queue or when the entry was
-        # reclaimed between the read and the accounting.
+        # accounting. The priority read passes over a unit this worker already
+        # failed while another live worker could take it. Returns nil on an
+        # empty queue or when the entry was reclaimed between the read and the
+        # accounting.
         def reserve(worker_id, block_ms: 1000)
-          stream, entry_id, fields = read_group(worker_id, "units:priority", nil) ||
-                                     read_group(worker_id, "units", block_ms)
+          stream, entry_id, fields = read_priority(worker_id) || read_group(worker_id, "units", block_ms)
           return nil unless entry_id
 
           reply = transition("delivery_accounting", worker_id, stream, entry_id, fields["id"])
@@ -287,6 +288,14 @@ module RSpec
         rescue Redis::NoScriptError
           @shas.delete(name)
           redis.eval(SCRIPTS.fetch(name), keys: keys, argv: argv)
+        end
+
+        def read_priority(worker_id)
+          reply = check!(transition("read_priority", worker_id, ms(timeout)), :read_priority, nil)
+          return nil unless reply.first == "OK"
+
+          _, entry_id, unit_id, unit_type = reply
+          ["units:priority", entry_id, { "id" => unit_id, "type" => unit_type }]
         end
 
         def read_group(worker_id, stream, block_ms)
