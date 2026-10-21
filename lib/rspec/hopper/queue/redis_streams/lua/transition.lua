@@ -92,11 +92,30 @@ local function read_unit_state(unit_id)
   return cjson.decode(raw)
 end
 
+-- `failed_on` (ids of the workers whose attempts were requeued) is written
+-- only once it has an entry: cjson encodes an empty list as an object.
 local function write_unit_state(unit_id, state)
+  local failed_on = ""
+  if state.failed_on and #state.failed_on > 0 then
+    local ids = {}
+    for i, id in ipairs(state.failed_on) do
+      ids[i] = cjson.encode(id)
+    end
+    failed_on = ',"failed_on":[' .. table.concat(ids, ",") .. "]"
+  end
   redis.call("HSET", unit_state, unit_id, string.format(
-    '{"retry_index":%d,"reclaim_count":%d,"entered_retry":%s}',
-    state.retry_index, state.reclaim_count, tostring(state.entered_retry == true)
+    '{"retry_index":%d,"reclaim_count":%d,"entered_retry":%s%s}',
+    state.retry_index, state.reclaim_count, tostring(state.entered_retry == true), failed_on
   ))
+end
+
+local function includes(list, value)
+  for _, item in ipairs(list or {}) do
+    if item == value then
+      return true
+    end
+  end
+  return false
 end
 
 -- Encodes an ordered list of {key, value} (or {key, raw_json, true}) pairs as
@@ -226,6 +245,76 @@ local function delivery_accounting(short, entry_id, unit_id)
   touch_worker({ current_unit = unit_id })
   renew_ttls()
   return { "OK", row.delivery_count, state.retry_index, state.reclaim_count }
+end
+
+-- Workers other than this one that touched the build within timeout_ms, the
+-- window after which reclaim treats a silent worker as lost.
+local function live_peers(timeout_ms)
+  local peers, now = {}, now_ms()
+  local flat = redis.call("HGETALL", workers)
+  for i = 1, #flat, 2 do
+    if flat[i] ~= worker_id then
+      local record = cjson.decode(flat[i + 1])
+      if now - (tonumber(record.last_seen) or 0) <= timeout_ms then
+        peers[#peers + 1] = flat[i]
+      end
+    end
+  end
+  return peers
+end
+
+local function another_taker(peers, failed_on)
+  for _, peer in ipairs(peers) do
+    if not includes(failed_on, peer) then
+      return true
+    end
+  end
+  return false
+end
+
+-- ARGV: timeout_ms. Reads the next undelivered priority entry, passing over a
+-- unit this worker has already failed while a live peer that has not failed it
+-- could take it instead. With no such peer the unit is taken anyway, so a lone
+-- worker still retries. Passed-over entries are acknowledged, deleted and
+-- re-added at the tail once the read is done, which leaves them undelivered
+-- for the next worker. Returns {"OK", entry_id, unit_id, unit_type} or
+-- {"NONE"}; the caller runs delivery_accounting as for any other read.
+local function read_priority(timeout_ms)
+  timeout_ms = tonumber(timeout_ms)
+  local peers, passed_over, found = nil, {}, { "NONE" }
+  while true do
+    -- pcall returns NOGROUP verbatim, so the adapter maps it as it does for
+    -- its own reads.
+    local reply = redis.pcall("XREADGROUP", "GROUP", GROUP, worker_id, "COUNT", 1, "STREAMS", priority, ">")
+    if type(reply) == "table" and reply.err then
+      return reply
+    end
+    local entry = type(reply) == "table" and reply[1][2][1] or nil
+    if not entry then
+      break
+    end
+    local entry_id, fields = entry[1], entry_fields(entry[2])
+    local state = read_unit_state(fields.id)
+    local failed_on = state and state.failed_on or {}
+    local pass = false
+    if includes(failed_on, worker_id) then
+      peers = peers or live_peers(timeout_ms)
+      pass = another_taker(peers, failed_on)
+    end
+    if not pass then
+      found = { "OK", entry_id, fields.id, fields.type }
+      break
+    end
+    passed_over[#passed_over + 1] = { entry_id, fields }
+  end
+  for _, passed in ipairs(passed_over) do
+    local entry_id, fields = passed[1], passed[2]
+    redis.call("XACK", priority, GROUP, entry_id)
+    redis.call("XDEL", priority, entry_id)
+    redis.call("XADD", priority, "*", "id", fields.id, "type", fields.type)
+  end
+  renew_ttls()
+  return found
 end
 
 -- First real entry in an XAUTOCLAIM reply. The reply is {next_id, entries} on
@@ -395,6 +484,10 @@ local function requeue(short, entry_id, delivery_count, unit_id, unit_type, max_
   end
   local previous_retry_index = state.retry_index
   state.retry_index = state.retry_index + 1
+  if not includes(state.failed_on, worker_id) then
+    state.failed_on = state.failed_on or {}
+    state.failed_on[#state.failed_on + 1] = worker_id
+  end
   write_unit_state(unit_id, state)
   redis.call("XACK", stream, GROUP, entry_id)
   local new_entry_id = redis.call("XADD", priority, "*", "id", unit_id, "type", unit_type)
@@ -460,6 +553,8 @@ end
 
 if mode == "delivery_accounting" then
   return delivery_accounting(ARGV[4], ARGV[5], ARGV[6])
+elseif mode == "read_priority" then
+  return read_priority(ARGV[4])
 elseif mode == "reclaim" then
   return reclaim(ARGV[4], ARGV[5])
 elseif mode == "heartbeat" then

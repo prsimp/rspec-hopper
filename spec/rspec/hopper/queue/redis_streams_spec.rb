@@ -232,6 +232,68 @@ RSpec.describe RSpec::Hopper::Queue::RedisStreams, :redis do
     end
   end
 
+  describe "routing requeued units away from the workers that failed them" do
+    let(:options) { { max_requeues: 3, requeue_tolerance: 1.0 } }
+
+    before { initialize_build }
+
+    def fail_attempt(reservation)
+      queue.requeue(reservation, duration_ms: 1, failure_summary: "1 failure", errors: [])
+    end
+
+    it "passes over the unit while another live worker could take it" do
+      first = queue.reserve("w1")
+      queue.reserve("w2")
+      fail_attempt(first)
+
+      expect(queue.reserve("w1").unit_id).to eq(unit_ids[2])
+      expect(redis.xpending(keys.units_priority, group)["size"]).to eq(0)
+
+      retried = queue.reserve("w2")
+      expect(retried).to have_attributes(unit_id: first.unit_id, stream: "units:priority", retry_index: 1,
+                                         delivery_count: 1)
+      expect(redis.xlen(keys.units_priority)).to eq(1)
+      expect(events(:delivered).map { |e| [e["unit_id"], e["worker_id"]] })
+        .to eq([[unit_ids[0], "w1"], [unit_ids[1], "w2"], [unit_ids[2], "w1"], [unit_ids[0], "w2"]])
+    end
+
+    it "keeps passed-over units ahead of untouched units" do
+      first = queue.reserve("w1")
+      queue.reserve("w2")
+      fail_attempt(first)
+      queue.reserve("w1")
+
+      expect(queue.reserve("w3").unit_id).to eq(first.unit_id)
+    end
+
+    it "takes the unit back when no other worker has been seen within the timeout" do
+      first = queue.reserve("w1")
+      redis.hset(keys.workers, "w2", JSON.generate("last_seen" => 0, "current_unit" => nil, "processed" => 0))
+      fail_attempt(first)
+
+      expect(queue.reserve("w1")).to have_attributes(unit_id: first.unit_id, stream: "units:priority")
+    end
+
+    it "takes the unit back once every live worker has failed it" do
+      first = queue.reserve("w1")
+      queue.reserve("w2")
+      fail_attempt(first)
+      queue.reserve("w1")
+      fail_attempt(queue.reserve("w2"))
+
+      expect(queue.unit_states[first.unit_id]["failed_on"]).to eq(%w[w1 w2])
+      expect(queue.reserve("w1")).to have_attributes(unit_id: first.unit_id, retry_index: 2)
+    end
+
+    it "lists each failing worker once" do
+      first = queue.reserve("w1")
+      fail_attempt(first)
+      fail_attempt(queue.reserve("w1"))
+
+      expect(queue.unit_states[first.unit_id]).to include("retry_index" => 2, "failed_on" => ["w1"])
+    end
+  end
+
   describe "#heartbeat" do
     before { initialize_build }
 
@@ -411,7 +473,7 @@ RSpec.describe RSpec::Hopper::Queue::RedisStreams, :redis do
       expect(result).to be_requeued
 
       expect(queue.unit_states[first.unit_id]).to eq("retry_index" => 1, "reclaim_count" => 0,
-                                                     "entered_retry" => true)
+                                                     "entered_retry" => true, "failed_on" => ["w1"])
       expect(queue.status.meta["requeued_units_count"]).to eq("1")
       expect(pending_row(first)).to be_nil
       expect(redis.xlen(keys.units_priority)).to eq(1)
@@ -479,7 +541,7 @@ RSpec.describe RSpec::Hopper::Queue::RedisStreams, :redis do
         expect(queue.requeue(second, duration_ms: 1, failure_summary: "1 failure", errors: [])).to be_finalized
         expect(events(:finalized).first).to include("unit_id" => second.unit_id, "reason" => "retry_budget_exhausted")
 
-        first_again = queue.reserve("w1")
+        first_again = queue.reserve("w2")
         expect(first_again.unit_id).to eq(first.unit_id)
         expect(queue.requeue(first_again, duration_ms: 1, failure_summary: "1 failure", errors: []))
           .to have_attributes(status: :requeued, retry_index: 2)

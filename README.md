@@ -133,6 +133,7 @@ These hold regardless of worker crashes, hung tests, or Redis trouble:
 - No Redis key created by the gem exists without a positive TTL.
 - Workers with different suite fingerprints never participate in the same build.
 - Requeued work is preferred over untouched work.
+- A requeued unit goes to a worker that has not failed it whenever a live one exists.
 - Redis, application or worker death and hung tests may delay completion; they cannot
   silently change the verdict or prevent completion indefinitely.
 
@@ -276,6 +277,16 @@ formatters:
 ```text
 Retrying ./spec/models/foo_spec.rb (retry 1 of 2; next attempt 2): 1 failure
 ```
+
+A retry runs on a different worker when it can. A failure that comes from one process's
+state (a stale in-memory cache, a leaked global, a poisoned connection) would otherwise
+follow the unit straight back: the worker that requeued it is usually the next to ask
+for work, and requeued units come first. So a worker passes over a requeued unit it has
+already failed as long as some other worker that has not failed it has been seen within
+`--timeout`; that worker takes it on its next reservation. When no such worker exists,
+because there is only one process or every live worker has failed the unit, the unit
+is retried wherever it is asked for. Waiting for a busy worker can delay a retry by up
+to one unit's run time on that worker.
 
 Unsupported RSpec options are rejected with exit 2 and a message naming the option,
 wherever they come from (`.rspec`, `~/.rspec`, `SPEC_OPTS` or the command line):
@@ -566,7 +577,7 @@ build's keys share one slot; Cluster itself is not supported in Phase 1.
 | `units:priority` | stream | Requeued units, read before `units`. Consumer group `workers`. | inactivity |
 | `attempts` | stream | The attempt log. | inactivity |
 | `meta` | hash | Manifest fields (`total_units`, `total_examples`, `file_counts`, `file_args`, `fingerprint`, `fingerprint_digests`, `seed`, `revision`, `load_errors`), `state` (`ready` or `init_failed`), `ready_at`, `finalized_count`, `requeued_units_count`, and the recorded `max_requeues`, `requeue_tolerance`, `max_reclaims`, `timeout` and `ttl`. | inactivity |
-| `unit_state` | hash | Unit id to `{"retry_index", "reclaim_count", "entered_retry"}`. | inactivity |
+| `unit_state` | hash | Unit id to `{"retry_index", "reclaim_count", "entered_retry"}`, plus `"failed_on"` (worker ids) after a requeue. | inactivity |
 | `workers` | hash | Worker id to `{"last_seen", "current_unit", "processed"}`. | inactivity |
 | `leader` | string | Initialization lease, `<worker>:<nonce>`. | 60 s fixed, never renewed |
 | `exists` | string | Tombstone, `"1"`. | `--tombstone-ttl`, never renewed |

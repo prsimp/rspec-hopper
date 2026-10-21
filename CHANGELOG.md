@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- Route a requeued unit to a worker that has not failed it. A worker reading the
+  priority stream passes over a unit it already failed while another worker that has
+  not failed it has been seen within `--timeout`, so retries escape process-local state
+  instead of landing back on the worker that just requeued them. With no such worker
+  the unit is retried as before. `unit_state` records the failing workers as
+  `failed_on`.
+
 ## [0.2.0] - 2026-09-13
 
 - A Rails example application under `examples/rails-app`, with its own bundle, that CI
