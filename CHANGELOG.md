@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-21
+
 - Route a requeued unit to a worker that has not failed it. A worker reading the
   priority stream passes over a unit it already failed while another worker that has
   not failed it has been seen within `--timeout`, so retries escape process-local state
