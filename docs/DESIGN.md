@@ -62,7 +62,7 @@ Key layout, all under `hopper:{<build>}:` (`Keys.for(build_id)`):
 | `units:priority` | stream | same; requeued entries go here                                |
 | `attempts`       | stream | attempt log; entries have one field `json`                    |
 | `meta`           | hash   | manifest fields + `state`, `ready_at`, `finalized_count`, `requeued_units_count` |
-| `unit_state`     | hash   | unit id -> JSON `{"retry_index":0,"reclaim_count":0,"entered_retry":false}` |
+| `unit_state`     | hash   | unit id -> JSON `{"retry_index":0,"reclaim_count":0,"entered_retry":false}`, plus `"failed_on":[<worker id>, ...]` once a requeue has happened |
 | `workers`        | hash   | worker id -> JSON `{"last_seen":<epoch ms int>,"current_unit":<id or null>,"processed":<int>}` |
 | `leader`         | string | `<worker_id>:<nonce>`, `SET NX EX 60`, never renewed          |
 | `exists`         | string | tombstone, `"1"`, TTL `tombstone_ttl`, never renewed          |
@@ -119,6 +119,15 @@ Modes and returns (arrays; first element is a status string):
   count is read from XPENDING and returned). Reads unit_state for retry_index and
   reclaim_count, appends `delivered`, HSET workers[worker_id] with `current_unit`. Returns
   `{"OK", delivery_count, retry_index, reclaim_count}`.
+* `read_priority` ARGV: timeout_ms. `XREADGROUP COUNT 1` on `units:priority`, repeated
+  while the entry read is one to pass over: its unit_state `failed_on` contains
+  worker_id and some other worker whose `workers` record has `last_seen` within
+  timeout_ms is not in `failed_on`. Passed-over entries are XACKed, XDELed and
+  re-XADDed (`id`, `type`) at the tail after the loop, so they stay undelivered for
+  the next reader. The live-peer check is what keeps a lone worker, or one whose every
+  live peer has also failed the unit, retrying instead of waiting forever. Returns
+  `{"OK", entry_id, unit_id, unit_type}` or `{"NONE"}`; NOGROUP comes back as the
+  original error reply. No event is appended for a pass-over.
 * `reclaim` ARGV: timeout_ms, max_reclaims. For each of `units:priority` then `units`:
   `XAUTOCLAIM <stream> workers <worker_id> <timeout_ms> 0-0 COUNT 1`. Reply is
   `{next_id, entries}` on 6.2 and `{next_id, entries, deleted_ids}` on 7+; entries may
@@ -150,7 +159,8 @@ Modes and returns (arrays; first element is a status string):
   `requeued_units_count >= max_requeued`): behave exactly like `finalize` with outcome
   `failed`, reason `retry_budget_exhausted`, and return `{"FINALIZED", retry_index}`.
   Otherwise: if not entered_retry, set it and `HINCRBY meta requeued_units_count 1`;
-  retry_index += 1; write unit_state; XACK old entry; XADD `units:priority` `id`, `type`;
+  retry_index += 1; append worker_id to `failed_on` unless present; write unit_state;
+  XACK old entry; XADD `units:priority` `id`, `type`;
   append `requeued` (carries `failure_summary`, `errors`, `previous_retry_index`; its
   `retry_index` is the post-increment value); HSET workers[worker_id] current_unit null,
   processed+1. Returns `{"REQUEUED", new_retry_index}`.
@@ -186,7 +196,7 @@ in seconds (Integer/Float); the adapter converts to ms.
 | `fail_initialization(token:, manifest:)` | `:init_failed`; same raises. `manifest.load_errors` non-empty. |
 | `manifest` | `Manifest` or nil |
 | `reclaim_lost(worker_id)` | `Reservation` or nil (nil also when the script finalized a unit as reclaim_budget_exhausted; that outcome is in the attempt log) |
-| `reserve(worker_id, block_ms: 1000)` | `Reservation` or nil. XREADGROUP priority (no block) then units (BLOCK block_ms), then delivery_accounting. If accounting returns STALE (someone reclaimed it between read and accounting), return nil. |
+| `reserve(worker_id, block_ms: 1000)` | `Reservation` or nil. `read_priority` (no block) then XREADGROUP units (BLOCK block_ms), then delivery_accounting. If accounting returns STALE (someone reclaimed it between read and accounting), return nil. |
 | `heartbeat(reservation)` | `true`; raises `StaleReservation`, `CorruptBuild` |
 | `finalize(reservation, outcome:, duration_ms:, reason: nil, errors: nil)` | `true`; raises `StaleReservation`, `CorruptBuild`. `outcome` is `:passed`/`:failed`; `reason` one of `test_failure`, `retry_budget_exhausted`, `reclaim_budget_exhausted` (required when failed); `errors` an Array of Hashes (see error payload) capped by `ErrorPayload.cap`. |
 | `requeue(reservation, duration_ms:, failure_summary:, errors:)` | `Queue::RequeueResult.new(status:, retry_index:)` with status `:requeued` or `:finalized`; raises `StaleReservation`, `CorruptBuild` |
@@ -197,7 +207,7 @@ in seconds (Integer/Float); the adapter converts to ms.
 | `finalized_count`, `total_units` | Integer; raise `BuildStateMissing` if meta gone |
 | `attempt_events` | `Array<Hash>` (symbol keys? NO — string keys, exactly as decoded from JSON) in stream order |
 | `workers` | `Hash<String, Hash>` worker id -> `{"last_seen"=>ms, "current_unit"=>..., "processed"=>n}` |
-| `unit_states` | `Hash<String, Hash>` unit id -> `{"retry_index"=>, "reclaim_count"=>, "entered_retry"=>}` |
+| `unit_states` | `Hash<String, Hash>` unit id -> `{"retry_index"=>, "reclaim_count"=>, "entered_retry"=>}` (+ `"failed_on"=>` after a requeue) |
 | `keys` | Array of the build's existing key names (for TTL scans, via SCAN MATCH `hopper:{build}:*`) |
 
 `Reservation = Data.define(:unit_id, :unit_type, :stream, :entry_id, :consumer,
